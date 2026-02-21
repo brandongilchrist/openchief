@@ -2,7 +2,7 @@
  * OpenChief Demo Engine
  *
  * A synthetic event generator that simulates a fictional company
- * ("Greenfield Labs") with 15 team members actively using GitHub,
+ * ("Serpin's Burger Shack") with 15 team members actively using GitHub,
  * Slack, Jira, Discord, Figma, Intercom, Amplitude, and Google Analytics.
  *
  * Runs on a 30-minute cron, generating 20-50 realistic events per cycle.

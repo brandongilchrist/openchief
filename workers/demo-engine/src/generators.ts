@@ -10,7 +10,6 @@ import {
   SLACK_CHANNELS, DISCORD_CHANNELS, PR_TITLES, JIRA_TICKETS,
   COMMUNITY_MEMBERS, CUSTOMERS,
   pick, pickN, randInt, randFloat, recentTimestamp,
-  type TeamMember,
 } from "./world";
 
 const now = (): string => new Date().toISOString();
@@ -19,7 +18,7 @@ const now = (): string => new Date().toISOString();
 
 export function generateGitHubEvents(): OpenChiefEvent[] {
   const events: OpenChiefEvent[] = [];
-  const engineers = TEAM.filter(m => m.team === "engineering" || m.github === "ninapatel");
+  const engineers = TEAM.filter(m => m.team === "engineering");
 
   // 2-4 PR events per cycle
   const prCount = randInt(2, 4);
@@ -87,7 +86,16 @@ export function generateGitHubEvents(): OpenChiefEvent[] {
 
   // 0-1 build events
   if (Math.random() > 0.4) {
-    const branch = pick(["main", "feature/auth-v2", "fix/memory-leak", "feature/permissions"]);
+    const branch = pick([
+      "main",
+      "feature/apple-pay-checkout",
+      "fix/delivery-eta-calculation",
+      "feature/kitchen-display-v2",
+      "fix/loyalty-points-sync",
+      "feature/catering-portal",
+      "fix/combo-discount-rounding",
+      "feature/order-tracking-map",
+    ]);
     const conclusion = Math.random() > 0.15 ? "success" : "failure";
     const triggerer = pick(engineers);
     const ts = recentTimestamp(1, 20);
@@ -121,31 +129,34 @@ export function generateSlackEvents(): OpenChiefEvent[] {
   const messageCount = randInt(8, 20);
 
   const slackMessages = [
-    "Deployed v2.4.1 to staging -- looks good so far",
-    "Can someone review my PR? It's been open since yesterday",
-    "The auth service is throwing 500s again, investigating",
-    "Customer demo went well! They're interested in the enterprise plan",
+    "Deployed mobile app v3.2.1 to TestFlight -- looks good so far",
+    "Can someone review my PR for the combo discount fix? Been open since yesterday",
+    "The ordering API is throwing 500s again during lunch rush, investigating",
+    "Catering demo with Downtown Office went well! They want to set up weekly orders",
     "Sprint retro at 3pm today, don't forget",
-    "Fixed the memory leak -- it was a closure holding a reference to the entire request object",
-    "New design mockups are in Figma, feedback welcome",
-    "Heads up: deploying database migration at 2pm UTC",
-    "The new onboarding flow increased activation by 12%",
-    "Anyone else seeing high latency on the search endpoint?",
-    "Quick standup update: auth migration is 80% done, should land tomorrow",
-    "Merged the rate limiting PR -- please test when you get a chance",
-    "Support ticket volume is up 15% this week, mostly billing questions",
-    "Reminder: security review for the file upload feature is Thursday",
-    "Good news: page load time dropped 40% after the CDN changes",
-    "Can we schedule a design review for the settings page?",
+    "Fixed the kitchen display lag -- it was a websocket reconnect loop on the ticket queue",
+    "New menu board mockups are in Figma, feedback welcome",
+    "Heads up: deploying menu service migration at 2pm UTC",
+    "The revamped checkout flow increased order completion by 12%",
+    "Anyone else seeing high latency on the delivery tracking endpoint?",
+    "Quick standup update: Apple Pay integration is 80% done, should land tomorrow",
+    "Merged the loyalty points PR -- please test redemption flow when you get a chance",
+    "Support ticket volume is up 15% this week, mostly curbside pickup issues",
+    "Reminder: security review for the payment gateway is Thursday",
+    "Good news: menu page load time dropped 40% after the image CDN changes",
+    "Can we schedule a design review for the catering portal?",
     "FYI: the staging DB will be down for 10 min at 4pm for maintenance",
-    "The A/B test results are in -- variant B wins by 8%",
-    "Just shipped dark mode to 10% of users, monitoring for issues",
-    "Customer feedback: they love the new API docs",
-    "Build is green again, the flaky test was fixed",
-    "Working on the billing refactor today, might need help with the Stripe webhook handler",
-    "Promoted the new hire's PR -- great first contribution!",
-    "Quarterly planning doc is ready for review in Notion",
-    "The caching layer is saving us ~$200/day in API costs",
+    "The A/B test results are in -- larger food photos increased add-to-cart by 8%",
+    "Just shipped the allergen filter to 10% of users, monitoring for issues",
+    "Customer feedback from Lakewood Mall: they love the new drive-thru order-ahead feature",
+    "Build is green again, the flaky kitchen display test was fixed",
+    "Working on the split payment feature today, need help with the Stripe multi-charge flow",
+    "Location #12 is live on the app! Grand opening promo codes are ready",
+    "Quarterly menu review doc is ready in Notion -- seasonal items need approval",
+    "The order caching layer is saving us ~$200/day in API costs during peak hours",
+    "Delivery driver app GPS accuracy improved after the last patch -- complaints down 30%",
+    "Franchise group from Northside wants a demo of the analytics dashboard",
+    "The new kitchen printer integration is working great at the downtown location",
   ];
 
   for (let i = 0; i < messageCount; i++) {
@@ -201,18 +212,21 @@ export function generateDiscordEvents(): OpenChiefEvent[] {
   const messageCount = randInt(3, 8);
 
   const communityMessages = [
-    "Hey, loving the new API! Just integrated it into my side project",
-    "Is there a way to increase the rate limit for the free tier?",
-    "Found a bug: the /users endpoint returns 404 when using API keys",
-    "Feature request: could you add webhook support for project events?",
-    "Just published a blog post about building with your platform!",
-    "The docs for the auth flow are a bit confusing, could use some examples",
-    "Thanks for fixing the pagination issue so quickly!",
-    "Any plans to support GraphQL?",
-    "The SDK is much better since the v2 update, great work team!",
-    "Running into CORS issues when calling from localhost, any tips?",
-    "Would love to see a Python SDK in addition to the Node one",
-    "The community Discord is awesome, learned so much here",
+    "Just tried the new spicy jalapeño smash burger -- absolute fire 🔥",
+    "Is the loyalty rewards program live at all locations yet?",
+    "The mobile app crashed when I tried to use a promo code at checkout",
+    "Feature request: let us save favorite customizations for repeat orders!",
+    "Just posted my review on the new seasonal shake -- 10/10",
+    "The drive-thru order-ahead is a game changer, no more waiting in line",
+    "Thanks for adding the allergen info! Makes ordering so much easier",
+    "Any plans to open a location on the east side of town?",
+    "The app is so much faster since the last update, great work team!",
+    "Tried to order delivery but my address keeps showing as out of range",
+    "Would love a veggie patty option that isn't just a garden burger",
+    "Shack Nation meetup at the downtown location this Saturday! Who's in?",
+    "The new combo deals are amazing -- saved $5 on my family order",
+    "Anyone else think the bacon cheese fries need to be a permanent menu item?",
+    "Just hit 500 loyalty points! What should I redeem them for?",
   ];
 
   for (let i = 0; i < messageCount; i++) {
@@ -307,8 +321,9 @@ export function generateFigmaEvents(): OpenChiefEvent[] {
   const events: OpenChiefEvent[] = [];
   const designers = TEAM.filter(m => m.team === "design" || m.role.includes("Designer"));
   const files = [
-    "Dashboard Redesign v3", "Onboarding Flow", "Settings Page",
-    "Mobile App Screens", "Component Library", "Marketing Landing Page",
+    "Mobile Order Flow v3", "Menu Board Design", "Catering Portal",
+    "Delivery Tracking Map", "Kitchen Display UI", "Loyalty Rewards Dashboard",
+    "Drive-Thru Order-Ahead", "Marketing Landing Page",
   ];
 
   if (Math.random() > 0.3) {
@@ -337,11 +352,13 @@ export function generateFigmaEvents(): OpenChiefEvent[] {
     const commenter = pick(TEAM);
     const file = pick(files);
     const comment = pick([
-      "Looks great! The spacing feels much better now",
-      "Can we try a darker shade for the background?",
-      "The button hierarchy is confusing -- primary and secondary look too similar",
-      "Love this direction. Let's present it to the team Thursday",
-      "This needs to match the component library tokens",
+      "Looks great! The menu item cards feel much more tappable now",
+      "Can we try our brand red for the order CTA? The gray blends in",
+      "The cart summary is confusing -- subtotal vs total with delivery fee look too similar",
+      "Love this direction for the catering flow. Let's present it to Derek Thursday",
+      "This needs to match our design system tokens -- the font weight is off",
+      "The kitchen ticket layout needs bigger text -- line cooks can't read it from 6ft away",
+      "Order tracking animation is slick! Can we add the driver's ETA?",
     ]);
     const ts = recentTimestamp(1, 25);
 
@@ -366,14 +383,16 @@ export function generateIntercomEvents(): OpenChiefEvent[] {
   const events: OpenChiefEvent[] = [];
 
   const topics = [
-    "Can't access my API keys after upgrading to the pro plan",
-    "How do I set up webhooks for my workspace?",
-    "Billing question: can I switch from monthly to annual?",
-    "Getting a 403 error when trying to create a new project",
-    "Feature request: team management for enterprise accounts",
-    "The export function is timing out on large datasets",
-    "Need help migrating from v1 to v2 of the API",
-    "Is there a way to add custom fields to user profiles?",
+    "We want to set up weekly catering orders for 200+ employees -- what's the process?",
+    "How do I access the franchise analytics dashboard?",
+    "Billing question: can we get volume pricing for our campus dining program?",
+    "Getting an error when trying to schedule a large catering order for next Friday",
+    "We'd like to add our own branded packaging -- is that part of the franchise agreement?",
+    "The delivery tracking link we send to customers isn't loading on mobile",
+    "Need help setting up the POS integration at our new Lakewood Mall location",
+    "Can we get custom loyalty rewards tiers for our franchise locations?",
+    "Our food truck event is in 3 weeks -- can we set up a special event menu?",
+    "The kitchen display system keeps disconnecting from the printer at our downtown store",
   ];
 
   const count = randInt(1, 3);
@@ -411,10 +430,12 @@ export function generateAmplitudeEvents(): OpenChiefEvent[] {
   if (Math.random() > 0.5) return [];
 
   const ts = recentTimestamp(1, 10);
-  const dau = randInt(1200, 2800);
-  const wau = randInt(5000, 12000);
-  const sessionDuration = randFloat(3.5, 8.2);
-  const conversionRate = randFloat(2.1, 5.8);
+  const dailyOrders = randInt(800, 2200);
+  const weeklyOrders = randInt(4500, 14000);
+  const avgOrderValue = randFloat(12.50, 18.75);
+  const mobileOrderPct = randFloat(38, 62);
+  const avgDeliveryMin = randFloat(22, 38);
+  const loyaltyRedemptionRate = randFloat(8, 22);
 
   return [{
     id: generateULID(),
@@ -422,16 +443,19 @@ export function generateAmplitudeEvents(): OpenChiefEvent[] {
     ingestedAt: now(),
     source: "amplitude",
     eventType: "metrics.snapshot",
-    scope: { org: ORG, project: "platform" },
+    scope: { org: ORG, project: "ordering-platform" },
     payload: {
-      dau,
-      wau,
-      avg_session_duration_min: Math.round(sessionDuration * 10) / 10,
-      signup_conversion_rate: Math.round(conversionRate * 100) / 100,
-      top_events: ["page_view", "api_call", "dashboard_visit", "export_clicked"],
+      daily_orders: dailyOrders,
+      weekly_orders: weeklyOrders,
+      avg_order_value: Math.round(avgOrderValue * 100) / 100,
+      mobile_order_pct: Math.round(mobileOrderPct * 10) / 10,
+      avg_delivery_time_min: Math.round(avgDeliveryMin * 10) / 10,
+      loyalty_redemption_rate: Math.round(loyaltyRedemptionRate * 10) / 10,
+      top_events: ["menu_viewed", "add_to_cart", "checkout_started", "order_placed", "delivery_tracked"],
+      top_menu_items: ["Classic Smash Burger", "Bacon Cheese Fries", "Shack Shake", "Spicy Jalapeño Burger"],
       retention_d7: randFloat(25, 45),
     },
-    summary: `Metrics snapshot: DAU=${dau}, WAU=${wau}, avg session=${sessionDuration.toFixed(1)}min, conversion=${conversionRate.toFixed(1)}%`,
+    summary: `Metrics snapshot: ${dailyOrders} daily orders, ${weeklyOrders} weekly, avg $${avgOrderValue.toFixed(2)}, ${mobileOrderPct.toFixed(0)}% mobile, ${avgDeliveryMin.toFixed(0)}min avg delivery`,
   }];
 }
 
@@ -442,9 +466,10 @@ export function generateGoogleAnalyticsEvents(): OpenChiefEvent[] {
   if (Math.random() > 0.4) return [];
 
   const ts = recentTimestamp(1, 10);
-  const pageviews = randInt(3000, 8000);
-  const users = randInt(800, 2500);
-  const bounceRate = randFloat(35, 55);
+  const pageviews = randInt(5000, 15000);
+  const users = randInt(1500, 5000);
+  const bounceRate = randFloat(30, 50);
+  const onlineOrderStarts = randInt(400, 1200);
 
   return [{
     id: generateULID(),
@@ -452,16 +477,17 @@ export function generateGoogleAnalyticsEvents(): OpenChiefEvent[] {
     ingestedAt: now(),
     source: "google-analytics",
     eventType: "traffic.snapshot",
-    scope: { org: ORG, project: "greenfield.dev" },
+    scope: { org: ORG, project: "serpinsburgers.com" },
     payload: {
       pageviews,
       active_users: users,
       bounce_rate: Math.round(bounceRate * 10) / 10,
-      top_pages: ["/docs/getting-started", "/pricing", "/blog/v2-launch", "/dashboard"],
-      top_sources: ["google", "github.com", "twitter.com", "direct"],
-      country_breakdown: { US: 42, UK: 12, DE: 8, IN: 7, CA: 6 },
+      online_order_starts: onlineOrderStarts,
+      top_pages: ["/menu", "/order", "/locations", "/catering", "/loyalty-rewards", "/careers"],
+      top_sources: ["google", "instagram.com", "yelp.com", "direct", "doordash.com"],
+      top_locations: { "Downtown": 28, "Lakewood Mall": 18, "University Ave": 15, "Northside": 12, "Airport": 10 },
     },
-    summary: `Site overview: ${pageviews} pageviews, ${users} users, ${bounceRate.toFixed(1)}% bounce rate`,
+    summary: `Site overview: ${pageviews} pageviews, ${users} users, ${bounceRate.toFixed(1)}% bounce, ${onlineOrderStarts} online orders started`,
   }];
 }
 
