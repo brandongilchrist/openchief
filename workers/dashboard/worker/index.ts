@@ -509,16 +509,26 @@ export default {
       }
 
       // -----------------------------------------------------------------------
-      // Demo mode guard — block all write operations
+      // Demo mode guard — block all write operations for unauthenticated users
       // -----------------------------------------------------------------------
       const isDemoMode = env.DEMO_MODE === "true";
       if (isDemoMode && (method === "POST" || method === "PUT" || method === "DELETE")) {
-        const isChatRequest = /^\/api\/agents\/[^/]+\/chat$/.test(path);
-        if (!isChatRequest) {
-          return errorJson("This is a read-only demo instance", 403);
+        // Admin sessions bypass the demo guard entirely
+        let isAdmin = false;
+        if (env.ADMIN_PASSWORD) {
+          const cookies = parseCookies(request.headers.get("Cookie"));
+          const token = cookies[SESSION_COOKIE];
+          if (token) {
+            isAdmin = !!(await verifySessionToken(token, env.ADMIN_PASSWORD));
+          }
         }
-        // Rate-limit chat in demo mode: 10 messages per IP per hour
-        if (isChatRequest) {
+
+        if (!isAdmin) {
+          const isChatRequest = /^\/api\/agents\/[^/]+\/chat$/.test(path);
+          if (!isChatRequest) {
+            return errorJson("This is a read-only demo instance", 403);
+          }
+          // Rate-limit chat in demo mode: 10 messages per IP per hour
           const ip = request.headers.get("cf-connecting-ip") || "unknown";
           const rateLimitKey = `demo:chat:${ip}`;
           const current = parseInt(await env.KV.get(rateLimitKey) || "0", 10);
@@ -747,8 +757,7 @@ async function handleGetMe(request: Request, env: Env): Promise<Response> {
 // POST /api/auth/login
 // ---------------------------------------------------------------------------
 async function handleLogin(request: Request, env: Env): Promise<Response> {
-  const provider = env.AUTH_PROVIDER || "none";
-  if (provider !== "password" || !env.ADMIN_PASSWORD) {
+  if (!env.ADMIN_PASSWORD) {
     return errorJson("Password auth not enabled", 400);
   }
 
@@ -806,7 +815,16 @@ async function handleSessionCheck(request: Request, env: Env): Promise<Response>
   const demoMode = env.DEMO_MODE === "true";
 
   if (provider === "none") {
-    return json({ authenticated: true, provider: "none", demoMode });
+    // In demo mode with ADMIN_PASSWORD set, check for admin session
+    let isAdmin = false;
+    if (demoMode && env.ADMIN_PASSWORD) {
+      const cookies = parseCookies(request.headers.get("Cookie"));
+      const token = cookies[SESSION_COOKIE];
+      if (token) {
+        isAdmin = !!(await verifySessionToken(token, env.ADMIN_PASSWORD));
+      }
+    }
+    return json({ authenticated: true, provider: "none", demoMode, isAdmin });
   }
 
   if (provider === "cloudflare-access") {
