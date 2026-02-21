@@ -475,7 +475,7 @@ export function generateGoogleAnalyticsEvents(): OpenChiefEvent[] {
     id: generateULID(),
     timestamp: ts,
     ingestedAt: now(),
-    source: "google-analytics",
+    source: "googleanalytics",
     eventType: "traffic.snapshot",
     scope: { org: ORG, project: "serpinsburgers.com" },
     payload: {

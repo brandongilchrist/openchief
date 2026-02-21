@@ -1636,7 +1636,7 @@ async function handleGetConnectionEvents(
   if (!CONNECTOR_CONFIGS[source]) return errorJson("Unknown connector", 404);
 
   const { results } = await env.DB.prepare(
-    `SELECT id, timestamp, source, event_type, scope, summary, tags
+    `SELECT id, timestamp, source, event_type, scope_org, scope_project, scope_team, scope_actor, summary, tags
      FROM events
      WHERE source = ?
      ORDER BY timestamp DESC
@@ -1648,7 +1648,10 @@ async function handleGetConnectionEvents(
       timestamp: string;
       source: string;
       event_type: string;
-      scope: string;
+      scope_org: string | null;
+      scope_project: string | null;
+      scope_team: string | null;
+      scope_actor: string | null;
       summary: string;
       tags: string | null;
     }>();
@@ -1658,7 +1661,12 @@ async function handleGetConnectionEvents(
     timestamp: row.timestamp,
     source: row.source,
     eventType: row.event_type,
-    scope: JSON.parse(row.scope),
+    scope: {
+      org: row.scope_org,
+      project: row.scope_project,
+      team: row.scope_team,
+      actor: row.scope_actor,
+    },
     summary: row.summary,
     tags: row.tags ? JSON.parse(row.tags) : [],
   }));
