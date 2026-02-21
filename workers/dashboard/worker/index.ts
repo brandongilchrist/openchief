@@ -513,10 +513,19 @@ export default {
       // -----------------------------------------------------------------------
       const isDemoMode = env.DEMO_MODE === "true";
       if (isDemoMode && (method === "POST" || method === "PUT" || method === "DELETE")) {
-        // Allow chat (POST /api/agents/:id/chat) in demo mode -- it's read-like
         const isChatRequest = /^\/api\/agents\/[^/]+\/chat$/.test(path);
         if (!isChatRequest) {
           return errorJson("This is a read-only demo instance", 403);
+        }
+        // Rate-limit chat in demo mode: 10 messages per IP per hour
+        if (isChatRequest) {
+          const ip = request.headers.get("cf-connecting-ip") || "unknown";
+          const rateLimitKey = `demo:chat:${ip}`;
+          const current = parseInt(await env.KV.get(rateLimitKey) || "0", 10);
+          if (current >= 10) {
+            return errorJson("Demo chat limit reached (10 messages/hour). Deploy your own instance for unlimited access!", 429);
+          }
+          await env.KV.put(rateLimitKey, String(current + 1), { expirationTtl: 3600 });
         }
       }
 
