@@ -23,6 +23,8 @@ interface Env {
   AUTH_PROVIDER?: string;
   /** Cloudflare Access team domain (e.g. "your-team.cloudflareaccess.com") — used for login redirect */
   CF_ACCESS_TEAM_DOMAIN?: string;
+  /** When "true", the dashboard is read-only (demo mode). Write endpoints return 403. */
+  DEMO_MODE?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +509,37 @@ export default {
       }
 
       // -----------------------------------------------------------------------
+      // Demo mode guard — block all write operations for unauthenticated users
+      // -----------------------------------------------------------------------
+      const isDemoMode = env.DEMO_MODE === "true";
+      if (isDemoMode && (method === "POST" || method === "PUT" || method === "DELETE")) {
+        // Admin sessions bypass the demo guard entirely
+        let isAdmin = false;
+        if (env.ADMIN_PASSWORD) {
+          const cookies = parseCookies(request.headers.get("Cookie"));
+          const token = cookies[SESSION_COOKIE];
+          if (token) {
+            isAdmin = !!(await verifySessionToken(token, env.ADMIN_PASSWORD));
+          }
+        }
+
+        if (!isAdmin) {
+          const isChatRequest = /^\/api\/agents\/[^/]+\/chat$/.test(path);
+          if (!isChatRequest) {
+            return errorJson("This is a read-only demo instance", 403);
+          }
+          // Rate-limit chat in demo mode: 10 messages per IP per hour
+          const ip = request.headers.get("cf-connecting-ip") || "unknown";
+          const rateLimitKey = `demo:chat:${ip}`;
+          const current = parseInt(await env.KV.get(rateLimitKey) || "0", 10);
+          if (current >= 10) {
+            return errorJson("Demo chat limit reached (10 messages/hour). Deploy your own instance for unlimited access!", 429);
+          }
+          await env.KV.put(rateLimitKey, String(current + 1), { expirationTtl: 3600 });
+        }
+      }
+
+      // -----------------------------------------------------------------------
       // GET /api/me
       // -----------------------------------------------------------------------
       if (method === "GET" && path === "/api/me") {
@@ -724,8 +757,7 @@ async function handleGetMe(request: Request, env: Env): Promise<Response> {
 // POST /api/auth/login
 // ---------------------------------------------------------------------------
 async function handleLogin(request: Request, env: Env): Promise<Response> {
-  const provider = env.AUTH_PROVIDER || "none";
-  if (provider !== "password" || !env.ADMIN_PASSWORD) {
+  if (!env.ADMIN_PASSWORD) {
     return errorJson("Password auth not enabled", 400);
   }
 
@@ -780,9 +812,19 @@ function handleLogout(): Response {
 // ---------------------------------------------------------------------------
 async function handleSessionCheck(request: Request, env: Env): Promise<Response> {
   const provider = env.AUTH_PROVIDER || "none";
+  const demoMode = env.DEMO_MODE === "true";
 
   if (provider === "none") {
-    return json({ authenticated: true, provider: "none" });
+    // In demo mode with ADMIN_PASSWORD set, check for admin session
+    let isAdmin = false;
+    if (demoMode && env.ADMIN_PASSWORD) {
+      const cookies = parseCookies(request.headers.get("Cookie"));
+      const token = cookies[SESSION_COOKIE];
+      if (token) {
+        isAdmin = !!(await verifySessionToken(token, env.ADMIN_PASSWORD));
+      }
+    }
+    return json({ authenticated: true, provider: "none", demoMode, isAdmin });
   }
 
   if (provider === "cloudflare-access") {
@@ -792,6 +834,7 @@ async function handleSessionCheck(request: Request, env: Env): Promise<Response>
       provider: "cloudflare-access",
       email: email || null,
       teamDomain: env.CF_ACCESS_TEAM_DOMAIN || null,
+      demoMode,
     });
   }
 
@@ -801,13 +844,13 @@ async function handleSessionCheck(request: Request, env: Env): Promise<Response>
     if (token) {
       const email = await verifySessionToken(token, env.ADMIN_PASSWORD);
       if (email) {
-        return json({ authenticated: true, provider: "password", email });
+        return json({ authenticated: true, provider: "password", email, demoMode });
       }
     }
-    return json({ authenticated: false, provider: "password" });
+    return json({ authenticated: false, provider: "password", demoMode });
   }
 
-  return json({ authenticated: true, provider: "none" });
+  return json({ authenticated: true, provider: "none", demoMode });
 }
 
 // ---------------------------------------------------------------------------
@@ -822,12 +865,13 @@ async function handleListAgents(request: Request, env: Env): Promise<Response> {
   const agents = await Promise.all(
     (results || []).map(async (row) => {
       const config = JSON.parse(row.config) as AgentDefinition;
-      // Check for avatar in KV
-      const avatarMeta = await env.KV.getWithMetadata(`avatar:${row.id}`);
+      // Check for avatar in KV (include content hash for cache busting)
+      const avatarMeta = await env.KV.getWithMetadata<{ contentType?: string; size?: number }>(`avatar:${row.id}`);
       const hasAvatar = avatarMeta.value !== null;
+      const avatarVersion = avatarMeta.metadata?.size || Date.now();
       return {
         ...config,
-        avatarUrl: hasAvatar ? `/api/agents/${row.id}/avatar` : null,
+        avatarUrl: hasAvatar ? `/api/agents/${row.id}/avatar?v=${avatarVersion}` : null,
       };
     })
   );
@@ -943,13 +987,14 @@ async function handleGetAgent(request: Request, env: Env, agentId: string): Prom
     return errorJson("Access restricted", 403);
   }
 
-  // Check for avatar
-  const avatarMeta = await env.KV.getWithMetadata(`avatar:${agentId}`);
+  // Check for avatar (include content hash for cache busting)
+  const avatarMeta = await env.KV.getWithMetadata<{ contentType?: string; size?: number }>(`avatar:${agentId}`);
   const hasAvatar = avatarMeta.value !== null;
+  const avatarVersion = avatarMeta.metadata?.size || Date.now();
 
   return json({
     ...config,
-    avatarUrl: hasAvatar ? `/api/agents/${agentId}/avatar` : null,
+    avatarUrl: hasAvatar ? `/api/agents/${agentId}/avatar?v=${avatarVersion}` : null,
   });
 }
 
@@ -1049,11 +1094,6 @@ async function handleUploadAvatar(
     metadata: { contentType: imageType.mime, size: buffer.byteLength },
   });
 
-  // Purge edge cache for this avatar URL
-  const cache = caches.default;
-  const avatarUrl = new URL(`/api/agents/${agentId}/avatar`, request.url);
-  await cache.delete(new Request(avatarUrl.toString()));
-
   return json({ ok: true, contentType: imageType.mime, size: buffer.byteLength });
 }
 
@@ -1066,12 +1106,6 @@ async function handleGetAvatar(
   agentId: string,
   ctx: ExecutionContext
 ): Promise<Response> {
-  // Try edge cache first
-  const cache = caches.default;
-  const cacheKey = new Request(new URL(request.url).toString(), request);
-  const cached = await cache.match(cacheKey);
-  if (cached) return cached;
-
   const { value, metadata } = await env.KV.getWithMetadata<{ contentType: string }>(
     `avatar:${agentId}`,
     { type: "arrayBuffer" }
@@ -1081,18 +1115,12 @@ async function handleGetAvatar(
     return errorJson("No avatar found", 404);
   }
 
-  const response = new Response(value as ArrayBuffer, {
+  return new Response(value as ArrayBuffer, {
     headers: {
       "Content-Type": metadata?.contentType || "image/png",
-      "Cache-Control": "public, max-age=604800, s-maxage=604800",
-      ETag: `"avatar-${agentId}"`,
+      "Cache-Control": "no-store",
     },
   });
-
-  // Store in edge cache
-  ctx.waitUntil(cache.put(cacheKey, response.clone()));
-
-  return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,11 +1132,6 @@ async function handleDeleteAvatar(
   agentId: string
 ): Promise<Response> {
   await env.KV.delete(`avatar:${agentId}`);
-
-  // Purge edge cache
-  const cache = caches.default;
-  const avatarUrl = new URL(`/api/agents/${agentId}/avatar`, request.url);
-  await cache.delete(new Request(avatarUrl.toString()));
 
   return json({ ok: true });
 }
@@ -1398,7 +1421,7 @@ async function handleTrigger(
   agentId: string,
   reportType: string
 ): Promise<Response> {
-  const runtimeUrl = `https://openchief-runtime/agents/${agentId}/trigger/${reportType}`;
+  const runtimeUrl = `https://openchief-runtime/trigger/${agentId}/${reportType}`;
 
   const runtimeResponse = await env.AGENT_RUNTIME.fetch(runtimeUrl, {
     method: "POST",
@@ -1611,7 +1634,7 @@ async function handleGetConnectionEvents(
   if (!CONNECTOR_CONFIGS[source]) return errorJson("Unknown connector", 404);
 
   const { results } = await env.DB.prepare(
-    `SELECT id, timestamp, source, event_type, scope, summary, tags
+    `SELECT id, timestamp, source, event_type, scope_org, scope_project, scope_team, scope_actor, summary, tags
      FROM events
      WHERE source = ?
      ORDER BY timestamp DESC
@@ -1623,7 +1646,10 @@ async function handleGetConnectionEvents(
       timestamp: string;
       source: string;
       event_type: string;
-      scope: string;
+      scope_org: string | null;
+      scope_project: string | null;
+      scope_team: string | null;
+      scope_actor: string | null;
       summary: string;
       tags: string | null;
     }>();
@@ -1633,7 +1659,12 @@ async function handleGetConnectionEvents(
     timestamp: row.timestamp,
     source: row.source,
     eventType: row.event_type,
-    scope: JSON.parse(row.scope),
+    scope: {
+      org: row.scope_org,
+      project: row.scope_project,
+      team: row.scope_team,
+      actor: row.scope_actor,
+    },
     summary: row.summary,
     tags: row.tags ? JSON.parse(row.tags) : [],
   }));
@@ -1820,42 +1851,63 @@ async function handleJobsStatus(request: Request, env: Env): Promise<Response> {
     "SELECT id, config FROM agent_definitions WHERE json_extract(config, '$.enabled') = true ORDER BY id"
   ).all<{ id: string; config: string }>();
 
-  // Get reports generated on this date
+  // Get reports generated on this date (include id, content for headline/health, event_count)
   const { results: reportRows } = await env.DB.prepare(
-    `SELECT agent_id, report_type, created_at
+    `SELECT id, agent_id, report_type, content, event_count, created_at
      FROM reports
      WHERE created_at >= ? AND created_at <= ?
      ORDER BY created_at DESC`
   )
     .bind(dateStart, dateEnd)
-    .all<{ agent_id: string; report_type: string; created_at: string }>();
+    .all<{ id: string; agent_id: string; report_type: string; content: string; event_count: number | null; created_at: string }>();
 
-  // Build a lookup: agentId -> reportTypes generated
-  const reportsByAgent = new Map<string, Array<{ reportType: string; createdAt: string }>>();
+  // Build a lookup: agentId:reportType -> report details
+  const reportLookup = new Map<string, {
+    id: string; reportType: string; createdAt: string;
+    healthSignal: string | null; headline: string | null; eventCount: number | null;
+  }>();
   for (const row of reportRows || []) {
-    if (!reportsByAgent.has(row.agent_id)) {
-      reportsByAgent.set(row.agent_id, []);
+    const key = `${row.agent_id}:${row.report_type}`;
+    if (!reportLookup.has(key)) {
+      let headline: string | null = null;
+      let healthSignal: string | null = null;
+      try {
+        const parsed = JSON.parse(row.content);
+        headline = parsed.headline || null;
+        healthSignal = parsed.healthSignal || null;
+      } catch { /* ignore */ }
+      reportLookup.set(key, {
+        id: row.id,
+        reportType: row.report_type,
+        createdAt: row.created_at,
+        healthSignal,
+        headline,
+        eventCount: row.event_count,
+      });
     }
-    reportsByAgent.get(row.agent_id)!.push({
-      reportType: row.report_type,
-      createdAt: row.created_at,
-    });
   }
 
   const jobs = (agentRows || []).map((row) => {
     const config = JSON.parse(row.config) as AgentDefinition;
-    const expectedReports = config.outputs.reports.map((r) => r.reportType);
-    const generatedReports = reportsByAgent.get(row.id) || [];
-    const generatedTypes = new Set(generatedReports.map((r) => r.reportType));
+    const expectedReports = config.outputs.reports.map((r) => {
+      const key = `${config.id}:${r.reportType}`;
+      const generated = reportLookup.get(key);
+      return {
+        reportType: r.reportType,
+        cadence: r.cadence,
+        completed: !!generated,
+        reportId: generated?.id || null,
+        healthSignal: generated?.healthSignal || null,
+        headline: generated?.headline || null,
+        completedAt: generated?.createdAt || null,
+        eventCount: generated?.eventCount || null,
+      };
+    });
 
     return {
       agentId: config.id,
       agentName: config.name,
-      date,
       expectedReports,
-      generatedReports,
-      pending: expectedReports.filter((rt) => !generatedTypes.has(rt)),
-      complete: expectedReports.every((rt) => generatedTypes.has(rt)),
     };
   });
 
