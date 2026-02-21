@@ -2,9 +2,9 @@
 
 **AI agents that passively watch your business tools and produce daily reports.**
 
-OpenChief deploys a fleet of specialized AI agents on [Cloudflare Workers](https://workers.cloudflare.com/). Each agent watches your connected data sources (GitHub, Slack, Discord, Intercom, etc.), synthesizes what happened, and delivers structured daily and weekly reports — like having a team of analysts working around the clock.
+OpenChief is a fleet of specialized AI agents that watch your connected data sources (GitHub, Slack, Discord, Intercom, etc.), synthesize what happened, and deliver structured daily and weekly reports — like having a team of analysts working around the clock.
 
-Open-source. Serverless. Runs entirely on Cloudflare's free tier.
+Open-source. Serverless. Run locally or deploy to [Cloudflare Workers](https://workers.cloudflare.com/) (free tier).
 
 ## How It Works
 
@@ -31,8 +31,8 @@ Data Sources          Connectors         Event Router        Agent Runtime      
 
 - [Node.js](https://nodejs.org/) 20+
 - [pnpm](https://pnpm.io/) 10+
-- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works)
 - [Anthropic API key](https://console.anthropic.com/)
+- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier) — **only if deploying**, not needed for local dev
 
 ### Setup
 
@@ -43,65 +43,58 @@ pnpm install
 pnpm run setup
 ```
 
-The setup wizard will:
+The interactive setup wizard asks how you want to run — **deploy to Cloudflare** or **local development** — and handles everything from there: org info, auth, database migrations, agent seeding, and config generation.
 
-1. Ask how you want to run OpenChief (deploy to Cloudflare or local dev)
-2. Collect your organization info
-3. Choose authentication (admin password, Cloudflare Access, or none)
-4. Create Cloudflare resources automatically (D1, KV, Queue, Vectorize)
-5. Run database migrations and seed all 15 agents
-6. Generate your config files
-
-Then deploy:
+**To deploy to Cloudflare:**
 
 ```bash
-pnpm run deploy
+pnpm run setup    # Select option 1: Deploy to Cloudflare
+pnpm run deploy   # Build + deploy all workers
 ```
 
-That's it. Your dashboard URL will be shown when the deploy completes. Open it, add your Anthropic API key, and connect your data sources.
+Your dashboard URL will be shown when the deploy completes. Open it, add your Anthropic API key, and connect your data sources.
+
+**To run locally (no Cloudflare account needed):**
+
+```bash
+pnpm run setup    # Select option 2: Local development
+pnpm dev          # Starts all workers locally
+```
+
+Dashboard at `http://localhost:5173`, runtime at `http://localhost:8787`. All data stays on your machine using local D1 (SQLite), local KV, and local queues — powered by `wrangler dev`.
 
 ### Authentication
 
-The setup wizard lets you choose how to protect your dashboard:
+When deploying to Cloudflare, the setup wizard lets you choose how to protect your dashboard:
 
 | Mode | Description |
 |------|-------------|
 | **Admin password** (recommended) | Single password login — simple, no external dependencies. Set during setup via `wrangler secret put ADMIN_PASSWORD`. |
-| **Cloudflare Access** | SSO via Cloudflare Zero Trust. Supports Google, GitHub, Okta, one-time PIN, and other identity providers. Requires creating an Access application in the CF dashboard (the deploy script shows the exact steps). |
+| **Cloudflare Access** | SSO via Cloudflare Zero Trust. Supports Google, GitHub, Okta, one-time PIN, and other identity providers. Free for up to 50 users. The deploy script shows setup steps. |
 | **No auth** | Open access — for local development or VPN-protected environments. |
 
 To change auth mode later, update `auth.provider` in `openchief.config.ts` and run `pnpm generate-config && pnpm run deploy`.
 
-### Local Development
-
-Choose "Local development" during setup to run everything locally with `wrangler dev` — no Cloudflare account needed:
-
-```bash
-pnpm run setup   # Select option 2: Local development
-pnpm dev         # Starts all workers locally
-```
-
-- Dashboard: `http://localhost:5173`
-- Runtime: `http://localhost:8787`
-
 ### Manual Setup
 
-If you prefer to configure things by hand:
+If you prefer to configure things by hand instead of using the setup wizard:
 
 ```bash
 # Copy the example config
 cp openchief.example.config.ts openchief.config.ts
 
-# Create Cloudflare resources
+# For local dev: set accountId to "local" and resource IDs to "local-placeholder"
+# For Cloudflare deploy: create resources and fill in real IDs:
 npx wrangler d1 create openchief-db
 npx wrangler kv namespace create OPENCHIEF_KV
 npx wrangler queues create openchief-events
 npx wrangler vectorize create openchief-agents --dimensions 768 --metric cosine
 
-# Fill in the resource IDs in openchief.config.ts, then:
+# Then:
 pnpm generate-config    # Write wrangler.jsonc files
 pnpm seed               # Seed agents to D1
-pnpm run deploy         # Build and deploy everything
+pnpm dev                # Local dev, or:
+pnpm run deploy         # Deploy to Cloudflare
 ```
 
 ## Agents
@@ -179,7 +172,7 @@ GitHub and Slack are fully implemented. Other connectors have the worker scaffol
 
 ## Architecture
 
-pnpm monorepo powered by Turborepo, running entirely on Cloudflare's edge:
+pnpm monorepo powered by Turborepo. Runs locally via `wrangler dev` or deployed to Cloudflare's edge:
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
@@ -247,12 +240,12 @@ interface OpenChiefEvent {
 ## Commands
 
 ```bash
-pnpm run setup          # Interactive setup wizard
+pnpm run setup          # Interactive setup wizard (local or Cloudflare)
+pnpm dev                # Start local dev servers (no Cloudflare needed)
 pnpm run deploy         # Build + deploy all workers to Cloudflare
-pnpm run teardown       # Delete all workers + Cloudflare resources
+pnpm run teardown       # Delete all deployed Cloudflare resources
 pnpm build              # Build all packages
 pnpm typecheck          # Type-check everything
-pnpm dev                # Start local dev servers
 pnpm seed               # Seed agent definitions to D1
 pnpm generate-config    # Regenerate wrangler.jsonc files from config
 ```
