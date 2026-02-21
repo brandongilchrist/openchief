@@ -24,19 +24,21 @@ openchief/
 │   ├── runtime/              # Agent Durable Object runtime (report generation + chat)
 │   ├── router/               # Event router (queue consumer → D1 persistence)
 │   ├── dashboard/            # React SPA + API worker (all UI + management endpoints)
-│   └── connectors/           # One Worker per data source
-│       ├── github/           # ✅ Full implementation (webhook + polling)
-│       ├── slack/            # ✅ Full implementation (webhook + polling + backfill)
-│       ├── discord/          # 📦 Stub (registered in dashboard)
-│       ├── figma/            # 📦 Stub
-│       ├── jira/             # 📦 Stub
-│       ├── notion/           # 📦 Stub
-│       ├── intercom/         # 📦 Stub
-│       ├── twitter/          # 📦 Stub
-│       ├── amplitude/        # 📦 Stub
-│       ├── google-calendar/  # 📦 Stub
-│       ├── google-analytics/ # 📦 Stub
-│       └── quickbooks/       # 📦 Stub
+│   └── connectors/           # One Worker per data source (14 connectors, all implemented)
+│       ├── github/           # Webhook + polling
+│       ├── slack/            # Webhook + polling + backfill + identity sync
+│       ├── discord/          # Webhook (Ed25519) + polling
+│       ├── figma/            # OAuth + webhook + polling (versions, comments, activity)
+│       ├── jira/             # Polling (issues, transitions, sprints)
+│       ├── jpd/              # Polling (Jira Product Discovery — ideas, insights)
+│       ├── notion/           # Polling (pages, databases, comments)
+│       ├── intercom/         # Webhook (HMAC-SHA1) + polling (conversations)
+│       ├── twitter/          # OAuth PKCE + polling (multi-account, search)
+│       ├── amplitude/        # Polling (metrics snapshots)
+│       ├── google-calendar/  # OAuth + polling (calendar events)
+│       ├── google-analytics/ # Polling (GA4 metrics via service account)
+│       ├── quickbooks/       # OAuth (Intuit) + polling (invoices, payments, P&L)
+│       └── rippling/         # Polling (employees, org structure, time-off)
 ├── agents/                   # 15 agent JSON definitions (data, not code)
 ├── migrations/               # 6 D1 SQL migration files
 ├── scripts/                  # setup.ts, seed-agents.ts, generate-config.ts, deploy.ts, teardown.ts

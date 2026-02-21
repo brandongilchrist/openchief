@@ -203,24 +203,24 @@ Three concurrent tasks:
 
 ---
 
-## Stub Connectors
+## Other Connectors
 
-The following 10 connectors are registered in the dashboard (`CONNECTOR_CONFIGS`) but have empty `src/` directories — no implementation yet:
+All 14 connectors are fully implemented. Beyond GitHub and Slack (documented in detail above), these connectors follow the same patterns:
 
-| Connector | Worker Name | Dashboard Config Fields |
-|-----------|-------------|------------------------|
-| discord | openchief-connector-discord | Bot Token, Public Key, Guild ID |
-| figma | openchief-connector-figma | Personal Access Token, Webhook Passcode |
-| jira | openchief-connector-jira | API Email, API Token, Instance URL, Projects |
-| notion | openchief-connector-notion | Integration Token |
-| intercom | openchief-connector-intercom | Access Token, Client Secret |
-| twitter | openchief-connector-twitter | Bearer Token, OAuth, Monitored Accounts, Search Queries |
-| amplitude | openchief-connector-amplitude | API Key, Secret Key, Project Name |
-| google-analytics | openchief-connector-googleanalytics | Service Account Key (JSON), GA4 Property ID |
-| google-calendar | openchief-connector-googlecalendar | OAuth Client ID/Secret, Calendar ID |
-| quickbooks | openchief-connector-quickbooks | Client ID, Client Secret |
-
-Additionally, **rippling** and **jpd** (Jira Product Discovery) are registered in the dashboard but have no worker directories at all yet.
+| Connector | Worker Name | Type | Key Features |
+|-----------|-------------|------|-------------|
+| discord | openchief-connector-discord | Webhook (Ed25519) + Polling | Deep backfill, configurable channel allowlist via `DISCORD_ALLOWED_CHANNELS` env var |
+| figma | openchief-connector-figma | OAuth + Webhook + Polling | Most sophisticated connector — version history, autosave detection, comment backfill, file activity tracking |
+| jira | openchief-connector-jira | Polling | Issues, transitions, comments, sprints |
+| jpd | openchief-connector-jpd | Polling | Jira Product Discovery — filters for Idea issue types via JQL |
+| notion | openchief-connector-notion | Polling (15m) | Pages, database entries, comments; deduplicates DB entries (which are also pages) |
+| intercom | openchief-connector-intercom | Webhook (HMAC-SHA1) + Polling | Conversations, messages, status changes; non-blocking webhook processing |
+| twitter | openchief-connector-twitter | OAuth PKCE + Polling | Multi-account monitoring, optional search queries, per-account OAuth tokens |
+| amplitude | openchief-connector-amplitude | Polling (6h) | Custom metrics snapshots |
+| google-analytics | openchief-connector-googleanalytics | Polling | GA4 metrics (DAU, WAU, traffic sources, geography) via service account |
+| google-calendar | openchief-connector-googlecalendar | OAuth + Polling | Calendar events, meetings; OAuth 2.0 with refresh token storage |
+| quickbooks | openchief-connector-quickbooks | OAuth (Intuit) + Polling | Invoices, payments, customers, P&L reports; stores realm ID |
+| rippling | openchief-connector-rippling | Polling (6h) | Employee data, org structure, time-off, payroll status; excludes salary data |
 
 ## How to Implement a New Connector
 

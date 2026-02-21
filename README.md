@@ -163,20 +163,20 @@ Agents are **data, not code** — just JSON files. Add one to `agents/` and run 
 |-----------|--------|--------|
 | **GitHub** | Full | `pr.*`, `review.*`, `build.*`, `issue.*`, `push.*` |
 | **Slack** | Full | `message.*`, `thread.*`, `reaction.*` |
-| Discord | Stub | `message.*`, `thread.*`, `reaction.*` |
-| Jira | Stub | `issue.*`, `sprint.*` |
-| Jira Product Discovery | Stub | `idea.*`, `insight.*` |
-| Notion | Stub | `page.*`, `database.*` |
-| Figma | Stub | `file.*`, `comment.*`, `library.*` |
-| Intercom | Stub | `conversation.*`, `ticket.*` |
-| Twitter/X | Stub | `tweet.*`, `mention.*` |
-| Amplitude | Stub | `metrics.*`, `event.*` |
-| Google Calendar | Stub | `calendar.*` |
-| Google Analytics | Stub | `traffic.*`, `conversion.*` |
-| QuickBooks | Stub | `invoice.*`, `payment.*`, `report.*` |
-| Rippling | Stub | `employee.*`, `payroll.*` |
+| **Discord** | Full | `message.*`, `thread.*`, `reaction.*` |
+| **Figma** | Full | `file.*`, `comment.*`, `library.*` |
+| **Jira** | Full | `issue.*`, `sprint.*` |
+| **Jira Product Discovery** | Full | `idea.*`, `insight.*` |
+| **Notion** | Full | `page.*`, `database.*` |
+| **Intercom** | Full | `conversation.*`, `ticket.*` |
+| **Twitter/X** | Full | `tweet.*`, `mention.*` |
+| **Amplitude** | Full | `metrics.*`, `event.*` |
+| **Google Calendar** | Full | `calendar.*` |
+| **Google Analytics** | Full | `traffic.*`, `conversion.*` |
+| **QuickBooks** | Full | `invoice.*`, `payment.*`, `report.*` |
+| **Rippling** | Full | `employee.*`, `payroll.*` |
 
-GitHub and Slack are fully implemented. Other connectors have the worker scaffolding in place and are ready to be built out.
+All 14 connectors are fully implemented with polling, normalization, and event publishing. GitHub, Slack, Discord, Figma, and Intercom also support real-time webhooks. Figma, Google Calendar, QuickBooks, and Twitter/X include OAuth flows.
 
 ## Architecture
 
@@ -267,12 +267,13 @@ openchief/
 │   ├── runtime/              # Agent Durable Object runtime
 │   ├── router/               # Event router (queue consumer)
 │   ├── dashboard/            # React SPA + API worker
-│   └── connectors/           # One worker per data source
-│       ├── github/           # Full implementation
-│       ├── slack/            # Full implementation
-│       ├── discord/          # Stub
-│       ├── jira/             # Stub
-│       └── ...               # 10 more connector stubs
+│   └── connectors/           # One worker per data source (14 connectors)
+│       ├── github/           # Webhook + polling
+│       ├── slack/            # Webhook + polling + backfill
+│       ├── discord/          # Webhook + polling
+│       ├── figma/            # OAuth + webhook + polling
+│       ├── jira/             # Polling
+│       └── ...               # 9 more connectors
 ├── agents/                   # 15 agent JSON definitions
 ├── migrations/               # D1 SQL migration files
 ├── scripts/                  # setup, seed, deploy, teardown, generate-config
@@ -287,7 +288,7 @@ Contributions welcome! The two highest-impact areas:
 
 ### Adding a Connector
 
-1. Create `workers/connectors/your-source/` (stubs already exist for most)
+1. Create `workers/connectors/your-source/` (see existing connectors for reference)
 2. Implement webhook handling and/or polling
 3. Normalize events to `OpenChiefEvent` format
 4. Publish to the `openchief-events` queue
