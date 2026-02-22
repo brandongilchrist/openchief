@@ -26,6 +26,12 @@ export function normalizeGitHubEvent(
       return [normalizePush(payload, now)];
     case "workflow_run":
       return [normalizeWorkflowRun(payload, now)];
+    case "deployment":
+      return [normalizeDeployment(payload, now)];
+    case "deployment_status":
+      return [normalizeDeploymentStatus(payload, now)];
+    case "release":
+      return [normalizeRelease(payload, now)];
     default:
       return [normalizeGeneric(eventType, payload, now)];
   }
@@ -354,6 +360,147 @@ function normalizeWorkflowRun(
     payload,
     summary: parts.join(" | "),
     tags: conclusion === "failure" ? ["build-failure"] : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Deployment
+// ---------------------------------------------------------------------------
+
+function normalizeDeployment(
+  payload: Record<string, unknown>,
+  now: string
+): OpenChiefEvent {
+  const action = payload.action as string;
+  const deployment = payload.deployment as Record<string, unknown>;
+  const repo = payload.repository as Record<string, unknown>;
+  const sender = payload.sender as Record<string, unknown>;
+
+  const environment = deployment.environment as string;
+  const ref = deployment.ref as string;
+  const description = deployment.description as string | null;
+  const createdAt = deployment.created_at as string;
+
+  const parts = [
+    `Deployment ${action} to "${environment}" in ${repo.full_name}`,
+    `ref=${ref}`,
+    `by=${sender.login}`,
+    `at=${createdAt}`,
+  ];
+  if (description) parts.push(`description="${description.slice(0, 100)}"`);
+
+  return {
+    id: generateULID(),
+    timestamp: createdAt || now,
+    ingestedAt: now,
+    source: "github",
+    eventType: `deploy.${action}`,
+    scope: {
+      org: (repo.owner as Record<string, unknown>)?.login as string,
+      project: repo.full_name as string,
+      actor: sender.login as string,
+    },
+    payload,
+    summary: parts.join(" | "),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Deployment Status
+// ---------------------------------------------------------------------------
+
+function normalizeDeploymentStatus(
+  payload: Record<string, unknown>,
+  now: string
+): OpenChiefEvent {
+  const deploymentStatus = payload.deployment_status as Record<string, unknown>;
+  const deployment = payload.deployment as Record<string, unknown>;
+  const repo = payload.repository as Record<string, unknown>;
+  const sender = payload.sender as Record<string, unknown>;
+
+  const state = deploymentStatus.state as string; // success, failure, error, pending, in_progress
+  const environment = deploymentStatus.environment as string;
+  const description = deploymentStatus.description as string | null;
+  const createdAt = deploymentStatus.created_at as string;
+  const ref = deployment.ref as string;
+
+  const eventType =
+    state === "success"
+      ? "deploy.succeeded"
+      : state === "failure" || state === "error"
+        ? "deploy.failed"
+        : `deploy.${state}`;
+
+  const parts = [
+    `Deploy to "${environment}" ${state} in ${repo.full_name}`,
+    `ref=${ref}`,
+    `by=${sender.login}`,
+    `at=${createdAt}`,
+  ];
+  if (description) parts.push(`description="${description.slice(0, 100)}"`);
+
+  return {
+    id: generateULID(),
+    timestamp: createdAt || now,
+    ingestedAt: now,
+    source: "github",
+    eventType,
+    scope: {
+      org: (repo.owner as Record<string, unknown>)?.login as string,
+      project: repo.full_name as string,
+      actor: sender.login as string,
+    },
+    payload,
+    summary: parts.join(" | "),
+    tags: state === "failure" || state === "error" ? ["deploy-failure"] : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Release
+// ---------------------------------------------------------------------------
+
+function normalizeRelease(
+  payload: Record<string, unknown>,
+  now: string
+): OpenChiefEvent {
+  const action = payload.action as string;
+  const release = payload.release as Record<string, unknown>;
+  const repo = payload.repository as Record<string, unknown>;
+  const sender = payload.sender as Record<string, unknown>;
+
+  const tagName = release.tag_name as string;
+  const name = release.name as string | null;
+  const draft = release.draft as boolean;
+  const prerelease = release.prerelease as boolean;
+  const createdAt = release.created_at as string;
+  const publishedAt = release.published_at as string | null;
+  const body = release.body as string | null;
+  const bodyPreview = body?.slice(0, 200) || "";
+
+  const parts = [
+    `Release "${name || tagName}" ${action} in ${repo.full_name}`,
+    `tag=${tagName}`,
+    `by=${sender.login}`,
+    `at=${publishedAt || createdAt}`,
+  ];
+  if (draft) parts.push("draft=true");
+  if (prerelease) parts.push("prerelease=true");
+  if (bodyPreview) parts.push(`notes="${bodyPreview.slice(0, 100)}"`);
+
+  return {
+    id: generateULID(),
+    timestamp: publishedAt || createdAt || now,
+    ingestedAt: now,
+    source: "github",
+    eventType: `release.${action}`,
+    scope: {
+      org: (repo.owner as Record<string, unknown>)?.login as string,
+      project: repo.full_name as string,
+      actor: sender.login as string,
+    },
+    payload,
+    summary: parts.join(" | "),
   };
 }
 

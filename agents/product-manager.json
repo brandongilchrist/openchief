@@ -9,7 +9,7 @@
     },
     {
       "source": "github",
-      "eventTypes": ["pr.merged", "pr.opened", "issue.*"]
+      "eventTypes": ["pr.merged", "pr.opened", "issue.*", "release.*", "deploy.*"]
     },
     {
       "source": "intercom",

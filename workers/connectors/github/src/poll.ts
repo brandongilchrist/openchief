@@ -33,6 +33,8 @@ interface PollResult {
   issues: number;
   pushes: number;
   workflows: number;
+  deployments: number;
+  releases: number;
   total: number;
 }
 
@@ -78,20 +80,32 @@ async function pollRepo(repo: string, env: PollEnv): Promise<PollResult> {
   );
   events.push(...prEvents);
 
-  // Fetch reviews (depends on PR data), issues, commits, comments, and workflows in parallel
-  const [reviews, issues, commits, comments, workflows] = await Promise.all([
-    fetchReviews(repo, rawPRs, token),
-    fetchIssues(repo, since, token),
-    fetchCommits(repo, since, token),
-    fetchComments(repo, since, token),
-    fetchWorkflowRuns(repo, since, token),
-  ]);
+  // Fetch reviews (depends on PR data), issues, commits, comments, and workflows in parallel.
+  // Each call is wrapped so a single 403/failure doesn't abort the others.
+  const safeFetch = <T>(p: Promise<T>, label: string): Promise<T | []> =>
+    p.catch((err) => {
+      console.warn(`Poll: ${label} failed for ${repo}: ${err}`);
+      return [] as unknown as T;
+    });
+
+  const [reviews, issues, commits, comments, workflows, deployments, releases] =
+    await Promise.all([
+      safeFetch(fetchReviews(repo, rawPRs, token), "reviews"),
+      safeFetch(fetchIssues(repo, since, token), "issues"),
+      safeFetch(fetchCommits(repo, since, token), "commits"),
+      safeFetch(fetchComments(repo, since, token), "comments"),
+      safeFetch(fetchWorkflowRuns(repo, since, token), "workflows"),
+      safeFetch(fetchDeployments(repo, since, token), "deployments"),
+      safeFetch(fetchReleases(repo, since, token), "releases"),
+    ]);
 
   events.push(...reviews);
   events.push(...issues);
   events.push(...commits);
   events.push(...comments);
   events.push(...workflows);
+  events.push(...deployments);
+  events.push(...releases);
 
   // Enqueue all events
   let queued = 0;
@@ -105,7 +119,7 @@ async function pollRepo(repo: string, env: PollEnv): Promise<PollResult> {
   await env.POLL_CURSOR.put(cursorKey, now);
 
   console.log(
-    `Polled ${repo}: ${queued} events enqueued (${prEvents.length} PRs, ${reviews.length} reviews, ${comments.length} comments, ${issues.length} issues, ${commits.length} commits, ${workflows.length} workflows)`
+    `Polled ${repo}: ${queued} events enqueued (${prEvents.length} PRs, ${reviews.length} reviews, ${comments.length} comments, ${issues.length} issues, ${commits.length} commits, ${workflows.length} workflows, ${deployments.length} deployments, ${releases.length} releases)`
   );
 
   return {
@@ -116,6 +130,8 @@ async function pollRepo(repo: string, env: PollEnv): Promise<PollResult> {
     issues: issues.length,
     pushes: commits.length,
     workflows: workflows.length,
+    deployments: deployments.length,
+    releases: releases.length,
     total: queued,
   };
 }
@@ -173,6 +189,18 @@ function slimPayload(event: OpenChiefEvent): OpenChiefEvent {
   // Workflow data
   if (p.triggering_actor) slim.triggering_actor = p.triggering_actor;
   if (p.head_branch) slim.head_branch = p.head_branch;
+
+  // Deployment data
+  if (p.environment) slim.environment = p.environment;
+  if (p.ref) slim.ref = p.ref;
+  if (p.description) slim.description = p.description;
+  if (p.deployment_url) slim.deployment_url = p.deployment_url;
+  if (p.target_url) slim.target_url = p.target_url;
+
+  // Release data
+  if (p.tag_name) slim.tag_name = p.tag_name;
+  if (p.prerelease !== undefined) slim.prerelease = p.prerelease;
+  if (p.body_preview) slim.body_preview = p.body_preview;
 
   return { ...event, payload: slim };
 }
@@ -616,6 +644,171 @@ async function fetchCommits(
       summary: `${login} committed "${message}" in ${repo}`,
     };
   });
+}
+
+/**
+ * Fetch recent deployments and their latest statuses.
+ * Gives us: deploy frequency, environments, success/failure rates.
+ */
+async function fetchDeployments(
+  repo: string,
+  since: string,
+  token: string
+): Promise<OpenChiefEvent[]> {
+  const [owner] = repo.split("/");
+  const url = `https://api.github.com/repos/${repo}/deployments?per_page=100`;
+  const deployments = await githubPaginate<Record<string, unknown>>(
+    url,
+    token,
+    3
+  );
+  const now = new Date().toISOString();
+  const events: OpenChiefEvent[] = [];
+
+  const filtered = deployments.filter(
+    (d) => (d.created_at as string) >= since
+  );
+
+  for (const dep of filtered) {
+    const creator = dep.creator as Record<string, unknown>;
+    const environment = dep.environment as string;
+    const ref = dep.ref as string;
+    const description = (dep.description as string) || "";
+    const createdAt = dep.created_at as string;
+
+    // Fetch the latest status for this deployment
+    let latestState = "pending";
+    let targetUrl: string | null = null;
+    try {
+      const statusUrl = `https://api.github.com/repos/${repo}/deployments/${dep.id}/statuses?per_page=1`;
+      const statuses = (await githubFetch(statusUrl, token)) as Array<
+        Record<string, unknown>
+      >;
+      if (statuses.length > 0) {
+        latestState = statuses[0].state as string;
+        targetUrl = (statuses[0].target_url as string) || null;
+      }
+    } catch {
+      // If we can't get statuses, still emit the deployment event
+    }
+
+    const eventType =
+      latestState === "success"
+        ? "deploy.succeeded"
+        : latestState === "failure" || latestState === "error"
+          ? "deploy.failed"
+          : `deploy.${latestState}`;
+
+    const parts = [
+      `Deployment to ${environment} ${latestState} in ${repo}`,
+      `ref=${ref}`,
+      `creator=${creator?.login}`,
+      `at=${createdAt}`,
+    ];
+    if (description) parts.push(`desc="${description.slice(0, 100)}"`);
+
+    events.push({
+      id: generateULID(),
+      timestamp: createdAt,
+      ingestedAt: now,
+      source: "github",
+      eventType,
+      scope: {
+        org: owner,
+        project: repo,
+        actor: creator?.login as string,
+      },
+      payload: {
+        environment,
+        ref,
+        description: description.slice(0, 200),
+        status: latestState,
+        html_url: dep.url,
+        target_url: targetUrl,
+        created_at: createdAt,
+      },
+      summary: parts.join(" | "),
+      tags:
+        latestState === "failure" || latestState === "error"
+          ? ["deploy-failure"]
+          : undefined,
+    });
+  }
+
+  return events;
+}
+
+/**
+ * Fetch recent releases (tags, changelogs, assets).
+ * Gives us: release cadence, versioning patterns, changelog quality.
+ */
+async function fetchReleases(
+  repo: string,
+  since: string,
+  token: string
+): Promise<OpenChiefEvent[]> {
+  const [owner] = repo.split("/");
+  const url = `https://api.github.com/repos/${repo}/releases?per_page=100`;
+  const releases = await githubPaginate<Record<string, unknown>>(
+    url,
+    token,
+    3
+  );
+  const now = new Date().toISOString();
+
+  return releases
+    .filter((r) => (r.created_at as string) >= since)
+    .map((release) => {
+      const author = release.author as Record<string, unknown>;
+      const tagName = release.tag_name as string;
+      const name = (release.name as string) || tagName;
+      const body = (release.body as string) || "";
+      const isDraft = release.draft as boolean;
+      const isPrerelease = release.prerelease as boolean;
+      const createdAt = release.created_at as string;
+
+      const flags = [
+        isDraft ? "draft" : null,
+        isPrerelease ? "prerelease" : null,
+      ]
+        .filter(Boolean)
+        .join(",");
+
+      const parts = [
+        `Release ${tagName} "${name}" by ${author?.login} in ${repo}`,
+        `at=${createdAt}`,
+      ];
+      if (flags) parts.push(`flags=[${flags}]`);
+      if (body) parts.push(`notes_preview="${body.slice(0, 100)}"`);
+
+      return {
+        id: generateULID(),
+        timestamp: createdAt,
+        ingestedAt: now,
+        source: "github",
+        eventType: isDraft
+          ? "release.created"
+          : isPrerelease
+            ? "release.prereleased"
+            : "release.published",
+        scope: {
+          org: owner,
+          project: repo,
+          actor: author?.login as string,
+        },
+        payload: {
+          tag_name: tagName,
+          name,
+          draft: isDraft,
+          prerelease: isPrerelease,
+          body_preview: body.slice(0, 200),
+          html_url: release.html_url,
+          created_at: createdAt,
+        },
+        summary: parts.join(" | "),
+        tags: isDraft ? ["draft"] : undefined,
+      };
+    });
 }
 
 async function fetchWorkflowRuns(

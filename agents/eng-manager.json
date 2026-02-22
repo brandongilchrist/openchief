@@ -1,11 +1,11 @@
 {
   "id": "eng-manager",
   "name": "Engineering Manager",
-  "description": "Watches GitHub PRs, builds, and Slack engineering channels. Produces daily standups and weekly summaries focused on shipping velocity, code quality, and team health.",
+  "description": "Watches GitHub PRs, builds, deployments, releases, and Slack engineering channels. Produces daily standups and weekly summaries focused on shipping velocity, code quality, and team health.",
   "subscriptions": [
     {
       "source": "github",
-      "eventTypes": ["pr.*", "review.*", "comment.*", "build.*", "push.*", "issue.*"]
+      "eventTypes": ["pr.*", "commit.*", "build.*", "deploy.*", "release.*", "issue.*"]
     },
     {
       "source": "slack",
