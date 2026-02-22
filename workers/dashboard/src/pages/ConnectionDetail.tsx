@@ -2,11 +2,14 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   ChevronRight,
+  ChevronDown,
   Save,
   Eye,
   EyeOff,
   Shield,
   Loader2,
+  BookOpen,
+  Terminal,
 } from "lucide-react";
 import {
   api,
@@ -40,6 +43,183 @@ interface AgentAccess {
   agentName: string;
   tools: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Setup Guide
+// ---------------------------------------------------------------------------
+
+interface SetupGuideData {
+  title: string;
+  manual: { step: string; detail: string }[];
+  claudeCode?: string;
+}
+
+const SETUP_GUIDES: Record<string, SetupGuideData> = {
+  github: {
+    title: "GitHub App Setup Guide",
+    manual: [
+      {
+        step: "Create a GitHub App",
+        detail:
+          'Go to your GitHub organization Settings → Developer settings → GitHub Apps → New GitHub App. Set the app name (e.g. "openchief-internal"), homepage URL to your OpenChief repo, and a description.',
+      },
+      {
+        step: "Configure webhook",
+        detail:
+          "Set the Webhook URL to your GitHub connector worker URL (e.g. https://your-worker.your-team.workers.dev). Generate a random webhook secret (openssl rand -hex 20) and enter it in the Webhook secret field.",
+      },
+      {
+        step: "Set repository permissions",
+        detail:
+          "Under Repository permissions, set the following to Read-only: Commit statuses, Contents, Issues, Metadata (mandatory), Pull requests.",
+      },
+      {
+        step: "Subscribe to events",
+        detail:
+          "Check these event subscriptions: Create, Delete, Issue comment, Issues, Pull request, Pull request review, Push, Status.",
+      },
+      {
+        step: 'Select "Only on this account" and create the app',
+        detail:
+          "Keep the app private to your organization. Click Create GitHub App. Note the App ID shown on the next page.",
+      },
+      {
+        step: "Generate a private key",
+        detail:
+          'Scroll down to "Private keys" on the app settings page and click Generate a private key. A .pem file will download. Convert it to PKCS#8 format: openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt -in downloaded.pem -out pkcs8.pem',
+      },
+      {
+        step: "Install the app",
+        detail:
+          'Click "Install App" in the sidebar, select your organization, choose "All repositories" (or select specific repos), and click Install. Note the Installation ID from the URL (the number at the end).',
+      },
+      {
+        step: "Enter credentials",
+        detail:
+          "Fill in the fields below with: App ID, Private Key (PKCS#8 PEM content), Installation ID, Webhook Secret, Repos (comma-separated, e.g. org/repo1,org/repo2), and an Admin Secret for the /poll endpoint.",
+      },
+    ],
+    claudeCode:
+      'You can automate the GitHub App setup using Claude Code with browser automation. Use this prompt:\n\n"Create a new GitHub App for OpenChief on my organization. Navigate to GitHub → Organization Settings → Developer Settings → GitHub Apps → New. Fill in the app name, set the webhook URL to my GitHub connector worker URL, generate a webhook secret, set repository permissions (Commit statuses, Contents, Issues, Pull requests — all Read-only), subscribe to events (Create, Delete, Issue comment, Issues, Pull request, Pull request review, Push, Status), select Only on this account, create the app, generate a private key, install it on the org for all repos, then convert the private key to PKCS#8 and set all the wrangler secrets on the connector worker."',
+  },
+  slack: {
+    title: "Slack App Setup Guide",
+    manual: [
+      {
+        step: "Create a Slack App",
+        detail:
+          "Go to api.slack.com/apps and click Create New App → From scratch. Name it (e.g. OpenChief) and select your workspace.",
+      },
+      {
+        step: "Configure bot permissions",
+        detail:
+          "Under OAuth & Permissions, add these Bot Token Scopes: channels:history, channels:read, groups:history, groups:read, users:read, users:read.email, reactions:read.",
+      },
+      {
+        step: "Enable Event Subscriptions",
+        detail:
+          "Turn on Event Subscriptions and set the Request URL to your Slack connector worker URL. Subscribe to bot events: message.channels, message.groups, reaction_added, member_joined_channel.",
+      },
+      {
+        step: "Install to workspace and get credentials",
+        detail:
+          "Install the app to your workspace. Copy the Bot User OAuth Token (xoxb-...) and the Signing Secret from Basic Information. Enter them below along with an Admin Secret.",
+      },
+    ],
+    claudeCode:
+      'Use Claude Code with browser automation: "Create a new Slack App for OpenChief on my workspace at api.slack.com. Set up bot permissions for reading channels, groups, users, and reactions. Enable Event Subscriptions with my Slack connector worker URL. Install to the workspace and set the wrangler secrets (SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, ADMIN_SECRET)."',
+  },
+};
+
+function SetupGuide({ source }: { source: string }) {
+  const guide = SETUP_GUIDES[source];
+  const [expanded, setExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<"manual" | "claude">(
+    guide?.claudeCode ? "claude" : "manual",
+  );
+  if (!guide) return null;
+
+  return (
+    <Card>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center justify-between px-6 py-4 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <BookOpen className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium">{guide.title}</span>
+        </div>
+        <ChevronDown
+          className={`h-4 w-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+      {expanded && (
+        <CardContent className="pt-0">
+          {/* Tabs */}
+          <div className="mb-4 flex gap-1 rounded-lg bg-muted p-1">
+            <button
+              onClick={() => setActiveTab("manual")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                activeTab === "manual"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <BookOpen className="h-3 w-3" />
+              Manual Setup
+            </button>
+            {guide.claudeCode && (
+              <button
+                onClick={() => setActiveTab("claude")}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  activeTab === "claude"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Terminal className="h-3 w-3" />
+                Claude Code
+              </button>
+            )}
+          </div>
+
+          {activeTab === "manual" ? (
+            <ol className="space-y-3">
+              {guide.manual.map((item, i) => (
+                <li key={i} className="flex gap-3">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
+                    {i + 1}
+                  </span>
+                  <div>
+                    <p className="text-sm font-medium">{item.step}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                      {item.detail}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                If you have Claude Code with browser automation (MCP Chrome
+                extension), you can automate the entire setup. Copy the prompt
+                below and paste it into Claude Code:
+              </p>
+              <pre className="whitespace-pre-wrap rounded-lg bg-muted p-4 text-xs leading-relaxed">
+                {guide.claudeCode}
+              </pre>
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ConnectionDetail
+// ---------------------------------------------------------------------------
 
 export function ConnectionDetail() {
   const { source } = useParams<{ source: string }>();
@@ -146,6 +326,11 @@ export function ConnectionDetail() {
           )}
         </div>
       </div>
+
+      {/* Setup Guide */}
+      {source && SETUP_GUIDES[source] && (
+        <SetupGuide source={source} />
+      )}
 
       {/* Configuration */}
       {config && config.fields.length > 0 && (

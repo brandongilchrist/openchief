@@ -78,13 +78,20 @@ async function pollRepo(repo: string, env: PollEnv): Promise<PollResult> {
   );
   events.push(...prEvents);
 
-  // Fetch reviews (depends on PR data), issues, commits, comments, and workflows in parallel
+  // Fetch reviews (depends on PR data), issues, commits, comments, and workflows in parallel.
+  // Each call is wrapped so a single 403/failure doesn't abort the others.
+  const safeFetch = <T>(p: Promise<T>, label: string): Promise<T | []> =>
+    p.catch((err) => {
+      console.warn(`Poll: ${label} failed for ${repo}: ${err}`);
+      return [] as unknown as T;
+    });
+
   const [reviews, issues, commits, comments, workflows] = await Promise.all([
-    fetchReviews(repo, rawPRs, token),
-    fetchIssues(repo, since, token),
-    fetchCommits(repo, since, token),
-    fetchComments(repo, since, token),
-    fetchWorkflowRuns(repo, since, token),
+    safeFetch(fetchReviews(repo, rawPRs, token), "reviews"),
+    safeFetch(fetchIssues(repo, since, token), "issues"),
+    safeFetch(fetchCommits(repo, since, token), "commits"),
+    safeFetch(fetchComments(repo, since, token), "comments"),
+    safeFetch(fetchWorkflowRuns(repo, since, token), "workflows"),
   ]);
 
   events.push(...reviews);
