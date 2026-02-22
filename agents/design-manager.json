@@ -1,7 +1,7 @@
 {
   "id": "design-manager",
   "name": "Design Manager",
-  "description": "Watches Figma activity, design discussions on Slack, and GitHub for design-related PRs. Tracks design velocity, collaboration, and system health.",
+  "description": "Watches Figma activity, design discussions on Slack, and GitHub releases and deployments. Tracks design velocity, collaboration, and what's shipping.",
   "subscriptions": [
     {
       "source": "figma",
@@ -13,7 +13,7 @@
     },
     {
       "source": "github",
-      "eventTypes": ["pr.opened", "pr.merged"]
+      "eventTypes": ["release.*", "deploy.*"]
     }
   ],
   "persona": {

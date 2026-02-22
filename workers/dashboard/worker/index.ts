@@ -665,6 +665,13 @@ export default {
         return handleGetConnectionEvents(env, source);
       }
 
+      // /api/connections/:source/stats
+      const connStatsMatch = path.match(/^\/api\/connections\/([^/]+)\/stats$/);
+      if (connStatsMatch && method === "GET") {
+        const source = decodeURIComponent(connStatsMatch[1]);
+        return handleGetConnectionStats(env, source);
+      }
+
       // /api/connections/:source/access
       const connAccessMatch = path.match(/^\/api\/connections\/([^/]+)\/access$/);
       if (connAccessMatch && method === "GET") {
@@ -1698,6 +1705,63 @@ async function handleGetConnectionEvents(
   }));
 
   return json(events);
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/connections/:source/stats
+// ---------------------------------------------------------------------------
+async function handleGetConnectionStats(
+  env: Env,
+  source: string
+): Promise<Response> {
+  if (!CONNECTOR_CONFIGS[source]) return errorJson("Unknown connector", 404);
+
+  // Run all three queries in parallel
+  const [volumeResult, typesResult, actorsResult] = await Promise.all([
+    // Daily event volume for last 30 days
+    env.DB.prepare(
+      `SELECT DATE(timestamp) as date, COUNT(*) as count
+       FROM events
+       WHERE source = ? AND timestamp >= datetime('now', '-30 days')
+       GROUP BY DATE(timestamp)
+       ORDER BY date ASC`
+    )
+      .bind(source)
+      .all<{ date: string; count: number }>(),
+
+    // Event type breakdown (top 10)
+    env.DB.prepare(
+      `SELECT event_type, COUNT(*) as count
+       FROM events
+       WHERE source = ? AND timestamp >= datetime('now', '-30 days')
+       GROUP BY event_type
+       ORDER BY count DESC
+       LIMIT 10`
+    )
+      .bind(source)
+      .all<{ event_type: string; count: number }>(),
+
+    // Top actors (top 8)
+    env.DB.prepare(
+      `SELECT scope_actor as actor, COUNT(*) as count
+       FROM events
+       WHERE source = ? AND scope_actor IS NOT NULL AND timestamp >= datetime('now', '-30 days')
+       GROUP BY scope_actor
+       ORDER BY count DESC
+       LIMIT 8`
+    )
+      .bind(source)
+      .all<{ actor: string; count: number }>(),
+  ]);
+
+  return json({
+    volume: volumeResult.results || [],
+    eventTypes: (typesResult.results || []).map((r) => ({
+      eventType: r.event_type,
+      count: r.count,
+    })),
+    topActors: actorsResult.results || [],
+  });
 }
 
 // ---------------------------------------------------------------------------

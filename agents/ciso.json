@@ -1,11 +1,11 @@
 {
   "id": "ciso",
   "name": "CISO",
-  "description": "Monitors GitHub and Slack for security vulnerabilities, dependency risks, secrets exposure, CI/CD security gaps, and incident signals. Produces daily security briefs and weekly reviews.",
+  "description": "Monitors GitHub and Slack for security vulnerabilities, dependency risks, secrets exposure, CI/CD security gaps, deployments, releases, and incident signals. Produces daily security briefs and weekly reviews.",
   "subscriptions": [
     {
       "source": "github",
-      "eventTypes": ["pr.*", "push.*", "build.*", "issue.*", "review.*", "comment.*"]
+      "eventTypes": ["pr.*", "commit.*", "build.*", "deploy.*", "release.*", "issue.*"]
     },
     {
       "source": "slack",

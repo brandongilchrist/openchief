@@ -21,7 +21,7 @@ A cron trigger (`0 */6 * * *`) calls `pollAllRepos()` which:
 
 1. Reads the list of repos from `GITHUB_REPOS` (comma-separated)
 2. Authenticates as a GitHub App using RS256 JWT → installation access token
-3. Fetches PRs, reviews, issues, commits, comments, and workflow runs via GitHub API
+3. Fetches PRs, reviews, issues, commits, comments, workflow runs, deployments, and releases via GitHub API
 4. Uses KV (`POLL_CURSOR`) to track the last-seen timestamp per repo (defaults to 30 days back on first run)
 5. Slims payloads to essential fields before normalizing (to stay under queue message size limits)
 6. Publishes all normalized events to the queue
@@ -44,11 +44,14 @@ Polling catches events that webhooks might miss (downtime, misconfiguration) and
 |-------------|---------------------|--------------|
 | `pull_request` | `pr.opened`, `pr.closed`, `pr.merged`, `pr.updated` | additions, deletions, draft, labels, reviewers |
 | `pull_request_review` | `pr.review.submitted` | state (approved/changes_requested), time-to-review hours |
+| `pull_request_review_comment` | `pr.review.comment` | file path, word count |
 | `issues` | `issue.opened`, `issue.closed`, `issue.updated` | number, title, labels, age in hours |
 | `issue_comment` | `issue.comment.created` | word count, body preview |
-| `pull_request_review_comment` | `pr.review.comment` | file path, word count |
 | `push` | `commit.pushed` | commit count, branch |
-| `workflow_run` | `build.completed` | conclusion (success/failure), branch |
+| `workflow_run` | `build.succeeded`, `build.failed`, `build.{conclusion}` | conclusion, branch, triggering actor |
+| `deployment` | `deploy.{action}` | environment, ref, description |
+| `deployment_status` | `deploy.succeeded`, `deploy.failed`, `deploy.{state}` | environment, state, target URL |
+| `release` | `release.published`, `release.prereleased`, `release.{action}` | tag name, draft/prerelease flags, body preview |
 
 ## Endpoints
 
@@ -99,8 +102,8 @@ All secrets are set via `wrangler secret put <NAME>`:
 1. Go to **GitHub org Settings → Developer settings → GitHub Apps → New GitHub App**
 2. Set the **Webhook URL** to this worker's URL (e.g. `https://openchief-connector-github.your-team.workers.dev`)
 3. Generate a **Webhook Secret** (`openssl rand -hex 20`) and enter it
-4. **Repository permissions** (all Read-only): Commit statuses, Contents, Issues, Metadata, Pull requests
-5. **Subscribe to events**: Create, Delete, Issue comment, Issues, Pull request, Pull request review, Push, Status
+4. **Repository permissions** (all Read-only): Actions, Commit statuses, Contents, Deployments, Issues, Metadata, Pull requests
+5. **Subscribe to events**: Create, Delete, Deployment, Deployment status, Issue comment, Issues, Pull request, Pull request review, Pull request review comment, Push, Release, Status, Workflow run
 6. Select **"Only on this account"**, click Create
 7. Note the **App ID** from the settings page
 8. **Generate a private key** → download `.pem` → convert to PKCS#8
@@ -117,8 +120,9 @@ Create a new GitHub App for OpenChief on my organization. Navigate to GitHub →
 Organization Settings → Developer Settings → GitHub Apps → New. Fill in the app
 name, set the webhook URL to my GitHub connector worker URL, generate a webhook
 secret, set repository permissions (Commit statuses, Contents, Issues, Pull
-requests — all Read-only), subscribe to events (Create, Delete, Issue comment,
-Issues, Pull request, Pull request review, Push, Status), select Only on this
+Actions, Deployments — all Read-only), subscribe to events (Create, Delete,
+Deployment, Deployment status, Issue comment, Issues, Pull request, Pull request
+review, Pull request review comment, Push, Release, Status, Workflow run), select Only on this
 account, create the app, generate a private key, install it on the org for all
 repos, then convert the private key to PKCS#8 and set all the wrangler secrets
 on the connector worker.
@@ -130,4 +134,4 @@ on the connector worker.
 - Payloads are slimmed before normalization to stay under queue message size limits (~128KB)
 - Results are logged with counts per event type
 - On first run for a repo, looks back 30 days; subsequent runs use KV cursor
-- Parallelizes API calls across resource types (PRs, issues, commits, comments, workflow runs)
+- Parallelizes API calls across resource types (PRs, issues, commits, comments, workflow runs, deployments, releases)
