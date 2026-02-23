@@ -333,7 +333,12 @@ export function AppSidebar({
         />
       </nav>
 
-      {/* User footer */}
+      {/* Version + User footer */}
+      {!collapsed && (
+        <p className="px-4 pb-1 text-[10px] text-muted-foreground/50 select-none">
+          v{__APP_VERSION__}
+        </p>
+      )}
       {user && (
         <div
           className={cn(
