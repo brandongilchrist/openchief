@@ -132,6 +132,25 @@ export default {
       return Response.json({ ok: true, cleared: `chat:${agentId}:${userEmail}` });
     }
 
+    // POST /admin/reset-alarms — force all agents to the staggered schedule
+    if (path === "/admin/reset-alarms" && request.method === "POST") {
+      const { results: agents } = await env.DB.prepare(
+        "SELECT id FROM agent_definitions WHERE enabled = 1"
+      ).all<{ id: string }>();
+
+      for (const agent of agents) {
+        const doId = env.AGENT_DO.idFromName(agent.id);
+        const stub = env.AGENT_DO.get(doId);
+        await stub.resetAlarm(agent.id);
+      }
+
+      return Response.json({
+        ok: true,
+        message: `Reset alarms for ${agents.length} agents`,
+        agents: agents.map((a) => a.id),
+      });
+    }
+
     // POST /admin/backfill-vectorize — index existing reports into Vectorize
     if (path === "/admin/backfill-vectorize" && request.method === "POST") {
       if (!env.VECTORIZE || !env.AI) {
