@@ -12,6 +12,8 @@ import { AgentHistory } from "@/pages/AgentHistory";
 import { ReportView } from "@/pages/ReportView";
 import { Connections } from "@/pages/Connections";
 import { ConnectionDetail } from "@/pages/ConnectionDetail";
+import { Tools } from "@/pages/Tools";
+import { VoiceGenerator } from "@/pages/VoiceGenerator";
 import { Team } from "@/pages/Team";
 import { Jobs } from "@/pages/Jobs";
 import { Models } from "@/pages/Models";
@@ -36,12 +38,17 @@ export function App() {
               path="/modules/:id/reports/:reportId"
               element={<ReportView />}
             />
-            {/* Connections — superadmin only */}
+            {/* Superadmin only */}
             <Route element={<RequireRole minRole="superadmin" />}>
               <Route path="/connections" element={<Connections />} />
               <Route
                 path="/connections/:source"
                 element={<ConnectionDetail />}
+              />
+              <Route path="/tools" element={<Tools />} />
+              <Route
+                path="/tools/voice-generator"
+                element={<VoiceGenerator />}
               />
             </Route>
             <Route path="/team" element={<Team />} />

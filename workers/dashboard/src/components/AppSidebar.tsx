@@ -23,6 +23,7 @@ import {
   TrendingUp,
   FlaskConical,
   Palette,
+  Wand2,
 } from "lucide-react";
 import type { AgentDefinition } from "@openchief/shared";
 import type { ConnectionStatus, CurrentUser } from "@/lib/api";
@@ -314,6 +315,13 @@ export function AppSidebar({
                 )}
               </div>
             )}
+            <NavItem
+              to="/tools"
+              icon={<Wand2 className="h-4 w-4" />}
+              label="Tools"
+              active={isActive("/tools")}
+              collapsed={collapsed}
+            />
           </>
         )}
 

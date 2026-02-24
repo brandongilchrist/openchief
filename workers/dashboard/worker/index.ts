@@ -801,6 +801,22 @@ export default {
       }
 
       // -----------------------------------------------------------------------
+      // Tools (superadmin only)
+      // -----------------------------------------------------------------------
+
+      if (path.startsWith("/api/tools")) {
+        const toolsEmail = await getUserEmail(request, env);
+        const toolsRole = await getUserRole(toolsEmail, env);
+        if (toolsRole !== "superadmin") {
+          return errorJson("Superadmin access required", 403);
+        }
+      }
+
+      if (method === "POST" && path === "/api/tools/generate-voice") {
+        return handleGenerateVoice(request, env);
+      }
+
+      // -----------------------------------------------------------------------
       // 404
       // -----------------------------------------------------------------------
       return errorJson("Not found", 404);
@@ -2472,4 +2488,102 @@ async function handleUpdateModel(
     .run();
 
   return json({ jobType, model: body.model, updatedAt: now });
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/tools/generate-voice
+// ---------------------------------------------------------------------------
+async function handleGenerateVoice(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const body = (await request.json()) as { identityId: string };
+
+  if (!body.identityId) {
+    return errorJson("identityId is required");
+  }
+
+  // Load identity to get display name and real name
+  const identity = await env.DB.prepare(
+    "SELECT id, display_name, real_name, slack_user_id FROM identity_mappings WHERE id = ?",
+  )
+    .bind(body.identityId)
+    .first<{
+      id: string;
+      display_name: string | null;
+      real_name: string | null;
+      slack_user_id: string | null;
+    }>();
+
+  if (!identity) {
+    return errorJson("Identity not found", 404);
+  }
+
+  const personName = identity.display_name || identity.real_name || "Unknown";
+
+  // Build name matching — scope_actor can be either display_name or real_name
+  const possibleNames = [identity.display_name, identity.real_name].filter(
+    (n): n is string => !!n,
+  );
+
+  if (possibleNames.length === 0) {
+    return errorJson(
+      "No name found for this identity — cannot match Slack messages",
+    );
+  }
+
+  // Query Slack messages by scope_actor (resolved display name at ingestion time)
+  const placeholders = possibleNames.map(() => "scope_actor = ?").join(" OR ");
+  const { results: messageRows } = await env.DB.prepare(
+    `SELECT payload FROM events
+     WHERE source = 'slack'
+       AND event_type LIKE 'message.%'
+       AND (${placeholders})
+     ORDER BY timestamp DESC
+     LIMIT 200`,
+  )
+    .bind(...possibleNames)
+    .all<{ payload: string }>();
+
+  if (!messageRows || messageRows.length === 0) {
+    return errorJson(
+      `No Slack messages found for "${personName}". Make sure the Slack connector is active and has ingested messages.`,
+      404,
+    );
+  }
+
+  // Extract text from each message payload
+  const messages: string[] = [];
+  for (const row of messageRows) {
+    try {
+      const payload = JSON.parse(row.payload) as { text?: string };
+      if (payload.text && typeof payload.text === "string" && payload.text.trim()) {
+        messages.push(payload.text.trim());
+      }
+    } catch {
+      // Skip malformed payloads
+    }
+  }
+
+  if (messages.length < 10) {
+    return errorJson(
+      `Only ${messages.length} Slack messages with text found for "${personName}". Need at least 10 for meaningful analysis.`,
+    );
+  }
+
+  // Proxy to runtime worker for Claude analysis
+  const runtimeResponse = await env.AGENT_RUNTIME.fetch(
+    "https://openchief-runtime/tools/generate-voice",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ personName, messages }),
+    },
+  );
+
+  const data = await runtimeResponse.text();
+  return new Response(data, {
+    status: runtimeResponse.status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
