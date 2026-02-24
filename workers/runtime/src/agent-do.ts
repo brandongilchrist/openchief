@@ -1412,6 +1412,24 @@ export class AgentDurableObject extends DurableObject<Env> {
    * Schedule the next daily/weekly alarm at this agent's staggered time slot.
    */
   /**
+   * Public wrapper for manual task execution trigger.
+   */
+  async triggerTaskExecution(agentId: string): Promise<{ ok: boolean; taskId?: string; error?: string }> {
+    await this.ensureAgentId(agentId);
+    const config = await this.getAgentConfig();
+    if (!config) {
+      return { ok: false, error: "No agent config found" };
+    }
+    try {
+      await this.executeNextTask(config);
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      return { ok: false, error: msg };
+    }
+  }
+
+  /**
    * Execute the highest-priority queued task assigned to this agent.
    */
   private async executeNextTask(config: AgentDefinition): Promise<void> {
