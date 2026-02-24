@@ -11,6 +11,8 @@ import {
   Search,
   UserCheck,
   ChevronDown,
+  MessageSquareWarning,
+  RefreshCw,
 } from "lucide-react";
 import { api, type Identity } from "@/lib/api";
 import type { AgentDefinition } from "@openchief/shared";
@@ -31,11 +33,20 @@ interface VoiceResult {
   messageCount: number;
   model: string;
   tokens: { input: number; output: number };
+  dateRange?: { oldest: string; newest: string };
+}
+
+interface SlackMessageCounts {
+  totalSlackEvents: number;
+  messageCounts: { name: string; count: number }[];
 }
 
 export function VoiceGenerator() {
   const [identities, setIdentities] = useState<Identity[]>([]);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
+  const [slackCounts, setSlackCounts] = useState<SlackMessageCounts | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -43,6 +54,10 @@ export function VoiceGenerator() {
   const [result, setResult] = useState<VoiceResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+
+  // Refresh Slack data state
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshed, setRefreshed] = useState(false);
 
   // Apply-to-agent state
   const [targetAgentId, setTargetAgentId] = useState<string | null>(null);
@@ -53,12 +68,14 @@ export function VoiceGenerator() {
   useEffect(() => {
     async function load() {
       try {
-        const [identityData, agentData] = await Promise.all([
+        const [identityData, agentData, countsData] = await Promise.all([
           api.get<Identity[]>("identities"),
           api.get<AgentDefinition[]>("agents"),
+          api.get<SlackMessageCounts>("tools/slack-message-counts"),
         ]);
         setIdentities(identityData.filter((id) => !id.isBot && id.isActive));
         setAgents(agentData.filter((a) => a.enabled));
+        setSlackCounts(countsData);
       } catch (err) {
         console.error("Failed to load data:", err);
       } finally {
@@ -67,6 +84,29 @@ export function VoiceGenerator() {
     }
     load();
   }, []);
+
+  // Build a lookup: person name → message count
+  const messageCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!slackCounts) return map;
+    for (const entry of slackCounts.messageCounts) {
+      // scope_actor is the display name used at ingestion time
+      const key = entry.name.toLowerCase();
+      map.set(key, (map.get(key) ?? 0) + entry.count);
+    }
+    return map;
+  }, [slackCounts]);
+
+  function getMessageCount(person: Identity): number {
+    let count = 0;
+    if (person.displayName) {
+      count += messageCountMap.get(person.displayName.toLowerCase()) ?? 0;
+    }
+    if (person.realName && person.realName !== person.displayName) {
+      count += messageCountMap.get(person.realName.toLowerCase()) ?? 0;
+    }
+    return count;
+  }
 
   const filtered = useMemo(() => {
     if (!search.trim()) return identities;
@@ -81,6 +121,7 @@ export function VoiceGenerator() {
 
   const selectedPerson = identities.find((id) => id.id === selectedId);
   const targetAgent = agents.find((a) => a.id === targetAgentId);
+  const hasSlackData = (slackCounts?.totalSlackEvents ?? 0) > 0;
 
   async function handleGenerate() {
     if (!selectedId) return;
@@ -137,6 +178,24 @@ export function VoiceGenerator() {
     }
   }
 
+  async function handleRefreshSlack() {
+    setRefreshing(true);
+    try {
+      await api.post("tools/refresh-slack", {});
+      setRefreshed(true);
+      // Re-fetch message counts after refresh
+      const countsData = await api.get<SlackMessageCounts>(
+        "tools/slack-message-counts",
+      );
+      setSlackCounts(countsData);
+      setTimeout(() => setRefreshed(false), 5000);
+    } catch (err) {
+      console.error("Failed to refresh Slack data:", err);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   function handleCopy(field: string, value: string) {
     navigator.clipboard.writeText(value);
     setCopied(field);
@@ -163,23 +222,74 @@ export function VoiceGenerator() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link
-          to="/tools"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </Link>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Voice Generator
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Analyze Slack messages to generate voice, personality, and output
-            style
-          </p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link
+            to="/tools"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Link>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Voice Generator
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Analyze the last 30 days of Slack messages to generate voice,
+              personality, and output style
+            </p>
+          </div>
         </div>
+        {hasSlackData && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefreshSlack}
+            disabled={refreshing}
+          >
+            {refreshing ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                Refreshing...
+              </>
+            ) : refreshed ? (
+              <>
+                <Check className="mr-1.5 h-3.5 w-3.5" />
+                Refreshed
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                Refresh Slack Data
+              </>
+            )}
+          </Button>
+        )}
       </div>
+
+      {/* No Slack data guard */}
+      {!hasSlackData && !result && (
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardContent className="flex items-start gap-3 py-5">
+            <MessageSquareWarning className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium">No Slack data available</p>
+              <p className="text-sm text-muted-foreground">
+                The Voice Generator needs Slack messages to analyze someone's
+                communication style. Connect and sync your Slack workspace first
+                from the{" "}
+                <Link
+                  to="/connections"
+                  className="underline hover:text-foreground"
+                >
+                  Connections
+                </Link>{" "}
+                page, then wait for messages to be ingested.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Results view */}
       {result && selectedPerson && (
@@ -199,6 +309,12 @@ export function VoiceGenerator() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Based on {result.messageCount} Slack messages
+                  {result.dateRange && (
+                    <>
+                      {" "}
+                      ({formatDateRange(result.dateRange.oldest, result.dateRange.newest)})
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -252,7 +368,11 @@ export function VoiceGenerator() {
                       onClick={() => setAgentDropdownOpen(!agentDropdownOpen)}
                       className="flex h-9 min-w-[180px] items-center justify-between rounded-md border border-input bg-background px-3 text-sm transition-colors hover:bg-accent"
                     >
-                      <span className={targetAgent ? "" : "text-muted-foreground"}>
+                      <span
+                        className={
+                          targetAgent ? "" : "text-muted-foreground"
+                        }
+                      >
                         {targetAgent ? targetAgent.name : "Select agent…"}
                       </span>
                       <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
@@ -327,8 +447,8 @@ export function VoiceGenerator() {
         </div>
       )}
 
-      {/* Person selector (shown when no result) */}
-      {!result && (
+      {/* Person selector (shown when no result and has Slack data) */}
+      {!result && hasSlackData && (
         <>
           {selectedPerson ? (
             <Card>
@@ -352,11 +472,14 @@ export function VoiceGenerator() {
                   <p className="font-medium">
                     {selectedPerson.displayName || selectedPerson.realName}
                   </p>
-                  {selectedPerson.email && (
-                    <p className="text-sm text-muted-foreground">
-                      {selectedPerson.email}
-                    </p>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {selectedPerson.email && (
+                      <p className="text-sm text-muted-foreground">
+                        {selectedPerson.email}
+                      </p>
+                    )}
+                    <MessageCountBadge count={getMessageCount(selectedPerson)} />
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -369,7 +492,12 @@ export function VoiceGenerator() {
                   <Button
                     size="sm"
                     onClick={handleGenerate}
-                    disabled={analyzing}
+                    disabled={analyzing || getMessageCount(selectedPerson) < 10}
+                    title={
+                      getMessageCount(selectedPerson) < 10
+                        ? "Need at least 10 Slack messages to generate a persona"
+                        : undefined
+                    }
                   >
                     {analyzing ? (
                       <>
@@ -401,47 +529,43 @@ export function VoiceGenerator() {
 
               {/* People grid */}
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {filtered.map((person) => (
-                  <button
-                    key={person.id}
-                    onClick={() => setSelectedId(person.id)}
-                    className="flex items-center gap-3 rounded-lg border border-border p-3 text-left transition-colors hover:border-ring hover:bg-secondary/50"
-                  >
-                    {person.avatarUrl ? (
-                      <img
-                        src={person.avatarUrl}
-                        alt=""
-                        className="h-8 w-8 rounded-full"
-                      />
-                    ) : (
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-medium">
-                        {(
-                          person.displayName ||
-                          person.realName ||
-                          "?"
-                        )[0]}
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">
-                        {person.displayName || person.realName}
-                      </p>
-                      {person.email && (
-                        <p className="truncate text-xs text-muted-foreground">
-                          {person.email}
-                        </p>
+                {filtered.map((person) => {
+                  const msgCount = getMessageCount(person);
+                  return (
+                    <button
+                      key={person.id}
+                      onClick={() => setSelectedId(person.id)}
+                      className="flex items-center gap-3 rounded-lg border border-border p-3 text-left transition-colors hover:border-ring hover:bg-secondary/50"
+                    >
+                      {person.avatarUrl ? (
+                        <img
+                          src={person.avatarUrl}
+                          alt=""
+                          className="h-8 w-8 rounded-full"
+                        />
+                      ) : (
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-medium">
+                          {(
+                            person.displayName ||
+                            person.realName ||
+                            "?"
+                          )[0]}
+                        </div>
                       )}
-                    </div>
-                    {person.slackUserId && (
-                      <Badge
-                        variant="outline"
-                        className="ml-auto shrink-0 text-[10px]"
-                      >
-                        Slack
-                      </Badge>
-                    )}
-                  </button>
-                ))}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
+                          {person.displayName || person.realName}
+                        </p>
+                        {person.email && (
+                          <p className="truncate text-xs text-muted-foreground">
+                            {person.email}
+                          </p>
+                        )}
+                      </div>
+                      <MessageCountBadge count={msgCount} />
+                    </button>
+                  );
+                })}
                 {filtered.length === 0 && (
                   <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
                     {search
@@ -472,6 +596,50 @@ export function VoiceGenerator() {
         </Card>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+function formatDateRange(oldest: string, newest: string): string {
+  const fmt = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+  return `${fmt(oldest)} – ${fmt(newest)}`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  MessageCountBadge                                                   */
+/* ------------------------------------------------------------------ */
+
+function MessageCountBadge({ count }: { count: number }) {
+  if (count === 0) {
+    return (
+      <Badge
+        variant="outline"
+        className="shrink-0 border-amber-500/30 text-[10px] text-amber-500"
+      >
+        No messages
+      </Badge>
+    );
+  }
+  if (count < 10) {
+    return (
+      <Badge
+        variant="outline"
+        className="shrink-0 border-amber-500/30 text-[10px] text-amber-500"
+      >
+        {count} msgs (need 10+)
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="shrink-0 text-[10px]">
+      {count} msgs
+    </Badge>
   );
 }
 
