@@ -14,6 +14,99 @@ import { getAgentTools, executeTool } from "./agent-tools";
 import type { ToolDefinition } from "./agent-tools";
 import { retrieveContext, indexReport } from "./rag";
 
+// ---------------------------------------------------------------------------
+// Staggered report schedule
+// ---------------------------------------------------------------------------
+// Each agent gets a specific time slot so reports trickle in between 8:00–9:00
+// AM local time. The CEO runs at 9:30 AM after all other reports are ready,
+// giving them the full picture for their morning meeting.
+//
+// Times are in the configured REPORT_TIMEZONE (defaults to America/Chicago).
+// New agents not listed here get a hash-based slot in the 8:53–8:59 window.
+// ---------------------------------------------------------------------------
+
+const REPORT_SCHEDULE: Record<string, { hour: number; minute: number }> = {
+  "eng-manager":        { hour: 8, minute: 0 },
+  "product-manager":    { hour: 8, minute: 4 },
+  "design-manager":     { hour: 8, minute: 8 },
+  "data-analyst":       { hour: 8, minute: 12 },
+  "customer-support":   { hour: 8, minute: 16 },
+  "community-manager":  { hour: 8, minute: 20 },
+  "marketing-manager":  { hour: 8, minute: 24 },
+  "cro":                { hour: 8, minute: 28 },
+  "bizdev":             { hour: 8, minute: 32 },
+  "head-of-hr":         { hour: 8, minute: 36 },
+  "ciso":               { hour: 8, minute: 40 },
+  "cfo":                { hour: 8, minute: 44 },
+  "legal-counsel":      { hour: 8, minute: 48 },
+  "researcher":         { hour: 8, minute: 52 },
+  "ceo":                { hour: 9, minute: 30 },
+};
+
+/** Fallback for agents not in the schedule — hash into the 8:53–8:59 window. */
+function defaultReportTime(agentId: string): { hour: number; minute: number } {
+  let hash = 0;
+  for (let i = 0; i < agentId.length; i++) {
+    hash = ((hash << 5) - hash + agentId.charCodeAt(i)) | 0;
+  }
+  return { hour: 8, minute: 53 + ((hash >>> 0) % 7) };
+}
+
+function getAgentReportTime(agentId: string): { hour: number; minute: number } {
+  return REPORT_SCHEDULE[agentId] ?? defaultReportTime(agentId);
+}
+
+/**
+ * Compute the UTC offset (in ms) for a timezone at a given instant.
+ * Positive = timezone is ahead of UTC (e.g., UTC+5:30 → +19800000).
+ */
+function tzOffsetMs(date: Date, tz: string): number {
+  const utcStr = date.toLocaleString("en-US", { timeZone: "UTC" });
+  const localStr = date.toLocaleString("en-US", { timeZone: tz });
+  return new Date(localStr).getTime() - new Date(utcStr).getTime();
+}
+
+/**
+ * Find the next occurrence of a given local time on a weekday.
+ * Handles DST transitions via the IANA timezone string.
+ *
+ * @param hour    Local hour (0–23)
+ * @param minute  Local minute (0–59)
+ * @param tz      IANA timezone (e.g. "America/Chicago")
+ * @param skipToTomorrow  If true, never returns a time today
+ */
+function nextWeekdayAlarm(
+  hour: number,
+  minute: number,
+  tz: string,
+  skipToTomorrow = false,
+): Date {
+  const now = Date.now();
+  for (let d = skipToTomorrow ? 1 : 0; d <= 7; d++) {
+    // Build a "naive UTC" date for the target day + local time
+    const base = new Date(now);
+    base.setUTCDate(base.getUTCDate() + d);
+    base.setUTCHours(hour, minute, 0, 0);
+
+    // Convert local→UTC by subtracting the timezone offset
+    const offset = tzOffsetMs(base, tz);
+    const utc = new Date(base.getTime() - offset);
+
+    // Must be in the future
+    if (utc.getTime() <= now) continue;
+
+    // Must be a weekday in local time
+    const localDay = new Date(utc.getTime() + offset).getUTCDay();
+    if (localDay === 0 || localDay === 6) continue;
+
+    return utc;
+  }
+  // Fallback — should never happen
+  return new Date(now + 24 * 3600_000);
+}
+
+// ---------------------------------------------------------------------------
+
 interface Env {
   DB: D1Database;
   KV: KVNamespace;
@@ -83,7 +176,18 @@ export class AgentDurableObject extends DurableObject<Env> {
   }
 
   /**
+   * Force-reset the alarm to this agent's staggered time slot.
+   * Used after schedule changes to migrate all agents to new times.
+   */
+  async resetAlarm(agentId: string): Promise<void> {
+    await this.ensureAgentId(agentId);
+    await this.ctx.storage.deleteAlarm();
+    await this.ensureAlarm(agentId);
+  }
+
+  /**
    * Called by the cron trigger to ensure the alarm chain is bootstrapped.
+   * Schedules the agent's next report at its staggered time slot.
    */
   async ensureAlarm(agentId: string): Promise<void> {
     await this.ensureAgentId(agentId);
@@ -91,7 +195,23 @@ export class AgentDurableObject extends DurableObject<Env> {
     if (!existingAlarm) {
       const config = await this.getAgentConfig();
       if (config) {
-        await this.scheduleNextPeriodicAlarm(config);
+        const hasDaily = config.outputs.reports.some(
+          (r) => r.cadence === "daily"
+        );
+        const hasWeekly = config.outputs.reports.some(
+          (r) => r.cadence === "weekly"
+        );
+        if (hasDaily || hasWeekly) {
+          const alarmType = hasDaily ? "daily" : "weekly";
+          const tz = this.env.REPORT_TIMEZONE || "America/Chicago";
+          const { hour, minute } = getAgentReportTime(agentId);
+          const alarmTime = nextWeekdayAlarm(hour, minute, tz);
+          await this.ctx.storage.put("pending_alarm_type", alarmType);
+          await this.ctx.storage.setAlarm(alarmTime.getTime());
+          console.log(
+            `Bootstrapped ${agentId} alarm for ${alarmTime.toISOString()} (${hour}:${String(minute).padStart(2, "0")} ${tz})`
+          );
+        }
       }
     }
   }
@@ -1022,7 +1142,7 @@ export class AgentDurableObject extends DurableObject<Env> {
   }
 
   /**
-   * Schedule the next daily/weekly alarm.
+   * Schedule the next daily/weekly alarm at this agent's staggered time slot.
    */
   private async scheduleNextPeriodicAlarm(
     config: AgentDefinition
@@ -1036,28 +1156,37 @@ export class AgentDurableObject extends DurableObject<Env> {
 
     if (!hasDaily && !hasWeekly) return;
 
-    const now = new Date();
+    const tz = this.env.REPORT_TIMEZONE || "America/Chicago";
+    const { hour, minute } = getAgentReportTime(config.id);
 
     if (hasDaily) {
-      const next = new Date(now);
-      next.setUTCDate(next.getUTCDate() + 1);
-      next.setUTCHours(14, 0, 0, 0); // 14:00 UTC — customize via config
-
-      // Skip weekends
-      const day = next.getUTCDay();
-      if (day === 0) next.setUTCDate(next.getUTCDate() + 1);
-      if (day === 6) next.setUTCDate(next.getUTCDate() + 2);
-
+      // skipToTomorrow=true because we just ran today's report
+      const next = nextWeekdayAlarm(hour, minute, tz, true);
       await this.ctx.storage.put("pending_alarm_type", "daily");
       await this.ctx.storage.setAlarm(next.getTime());
+      console.log(
+        `Scheduled next ${config.id} daily alarm for ${next.toISOString()}`
+      );
     } else if (hasWeekly) {
-      const next = new Date(now);
-      const daysUntilMonday = (8 - next.getUTCDay()) % 7 || 7;
-      next.setUTCDate(next.getUTCDate() + daysUntilMonday);
-      next.setUTCHours(14, 0, 0, 0);
-
-      await this.ctx.storage.put("pending_alarm_type", "weekly");
-      await this.ctx.storage.setAlarm(next.getTime());
+      // Weekly: find next Monday at the agent's time slot
+      const now = new Date();
+      for (let d = 1; d <= 7; d++) {
+        const candidate = new Date(now);
+        candidate.setUTCDate(candidate.getUTCDate() + d);
+        candidate.setUTCHours(hour, minute, 0, 0);
+        const offset = tzOffsetMs(candidate, tz);
+        const utc = new Date(candidate.getTime() - offset);
+        const localDay = new Date(utc.getTime() + offset).getUTCDay();
+        if (localDay === 1) {
+          // Monday
+          await this.ctx.storage.put("pending_alarm_type", "weekly");
+          await this.ctx.storage.setAlarm(utc.getTime());
+          console.log(
+            `Scheduled next ${config.id} weekly alarm for ${utc.toISOString()}`
+          );
+          return;
+        }
+      }
     }
   }
 }
