@@ -41,7 +41,7 @@ openchief/
 │       ├── quickbooks/       # OAuth (Intuit) + polling (invoices, payments, P&L)
 │       └── rippling/         # Polling (employees, org structure, time-off)
 ├── agents/                   # 15 agent JSON definitions (data, not code)
-├── migrations/               # 6 D1 SQL migration files
+├── migrations/               # 7 D1 SQL migration files
 ├── scripts/                  # setup.ts, seed-agents.ts, generate-config.ts, deploy.ts, teardown.ts
 ├── openchief.example.config.ts
 ├── turbo.json
@@ -158,10 +158,58 @@ Each agent definition has an optional `tools: string[]` array. Tools are looked 
 | Tool | Description | Used By |
 |------|-------------|---------|
 | `query_events` | Read-only SQL (SELECT/WITH) against D1 events table | Most agents |
+| `query_tasks` | Read-only SQL against D1 tasks table | CEO |
 | `github_file` | Fetch file content or directory listing from configured repo | eng-manager, ciso |
 | `github_search` | Code search in configured GitHub repo | eng-manager, ciso |
 
 Tool access is enforced: agents without a tool in their `tools` array cannot use it in chat.
+
+## Task System
+
+Agents can propose, prioritize, and execute work items autonomously. The task lifecycle is: `proposed → queued → in_progress → completed` (or `cancelled`).
+
+### How It Works
+
+1. **Proposal** — During report generation, agents can propose tasks in the `taskProposals[]` array of their JSON output. Proposals are parsed by `parseTaskProposals()` and inserted into D1 with status `proposed`.
+2. **Prioritization** — The CEO's daily meeting prompt includes all proposed tasks under "TASK QUEUE — AWAITING YOUR PRIORITIZATION". The CEO approves (→ `queued`) or cancels via `taskDecisions[]`, parsed by `parseTaskDecisions()`.
+3. **Execution** — The dual alarm system checks hourly during business hours (8am–6pm weekdays). Each agent picks its highest-priority queued task, marks it `in_progress`, builds a task execution prompt with persona + RAG context, calls Claude, and stores the structured output.
+4. **Dashboard** — Tasks page (`/tasks`) with status/agent/priority filters. TaskDetail page renders output with markdown.
+
+### Dual Alarm System
+
+Durable Objects support only one alarm at a time. The runtime schedules whichever comes first — the next report or the next task check — and stores the type in `pending_alarm_type` (`"daily"`, `"weekly"`, or `"task"`). After each alarm fires, it re-schedules the next one.
+
+Task checks are staggered by agent ID hash (0–14 minute offset) to avoid thundering herd on D1.
+
+### Implementation Files
+
+| File | Role |
+|------|------|
+| `packages/shared/src/types/task.ts` | Task, TaskProposal, TaskDecision, TaskOutput types |
+| `migrations/0007_create_tasks.sql` | D1 tasks table + indexes + model_settings seed |
+| `workers/runtime/src/prompt-builder.ts` | Injects pending tasks + `taskProposals[]` schema into report prompts |
+| `workers/runtime/src/meeting-prompt.ts` | Injects task queue + `taskDecisions[]` schema into CEO meeting prompts |
+| `workers/runtime/src/report-parser.ts` | `parseTaskProposals()` and `parseTaskDecisions()` |
+| `workers/runtime/src/task-prompt.ts` | `buildTaskExecutionPrompt()` — persona-aware prompt for task execution |
+| `workers/runtime/src/agent-do.ts` | `executeNextTask()`, dual alarm scheduling, task proposal insertion |
+| `workers/runtime/src/agent-tools.ts` | `query_tasks` tool definition |
+| `workers/dashboard/src/pages/Tasks.tsx` | Tasks list page with filtering and inline actions |
+| `workers/dashboard/src/pages/TaskDetail.tsx` | Task detail page with rendered output |
+| `workers/dashboard/worker/index.ts` | Task CRUD API endpoints |
+
+### API Endpoints
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/tasks` | List tasks (filterable by `status`, `assignedTo`, `createdBy`) |
+| `GET` | `/api/tasks/:id` | Get single task |
+| `POST` | `/api/tasks` | Create task manually |
+| `PUT` | `/api/tasks/:id` | Update task (status, priority, assignee) |
+| `GET` | `/api/tasks/stats` | Task counts by status |
+
+### Manual Task Trigger
+
+`POST /trigger-task/:agentId` on the runtime worker triggers immediate task execution for testing. The agent picks its highest-priority queued task and executes it.
 
 ## Exec Visibility (Private Channels)
 
@@ -296,7 +344,7 @@ Regardless of auth mode, user email is resolved via the `identity_mappings` D1 t
 
 ## Database (D1)
 
-6 migration files in `migrations/`:
+7 migration files in `migrations/`:
 - `events` — All normalized events from all connectors
 - `agent_definitions` — Agent configs (JSON)
 - `agent_subscriptions` — Source + event type patterns per agent
@@ -304,6 +352,7 @@ Regardless of auth mode, user email is resolved via the `identity_mappings` D1 t
 - `agent_revisions` — Change history for agent configs
 - `identity_mappings` — Cross-platform user identity (GitHub, Slack, Discord, Figma, Jira, Notion). Key columns: `role` (superadmin/exec/null), `is_active` (1/0 for hide/show), `is_bot`, `team`
 - `model_settings` — Per-job-type AI model configuration
+- `tasks` — Agent-proposed work items with CEO prioritization and autonomous execution. Key columns: `status` (proposed/queued/in_progress/completed/cancelled), `priority` (0-100), `created_by`, `assigned_to`, `output` (JSON)
 
 ## Caching (KV)
 
