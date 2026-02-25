@@ -13,7 +13,7 @@
     },
     {
       "source": "slack",
-      "eventTypes": ["message.*", "thread.*", "reaction.*"]
+      "eventTypes": ["message.*", "thread.*"]
     },
     {
       "source": "discord",

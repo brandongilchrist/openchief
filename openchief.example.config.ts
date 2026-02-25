@@ -45,6 +45,26 @@ const config: OpenChiefConfig = {
     repo: "your-org/your-repo",
   },
 
+  /**
+   * Per-agent overrides (optional).
+   *
+   * channelFilters: Focus agents on specific Slack/Discord channels.
+   * Map agent ID → list of channel names. Applied at seed time.
+   * This keeps org-specific channel names out of the generic agent JSONs.
+   */
+  // agents: {
+  //   channelFilters: {
+  //     "cfo": ["#finance", "#operations", "#general"],
+  //     "bizdev": ["#partnerships", "#sales", "#general"],
+  //     "customer-support": ["#support", "#feedback", "#general"],
+  //     "marketing-manager": ["#marketing", "#social", "#general"],
+  //     "community-manager": ["#community", "#random", "#general"],
+  //     "researcher": ["#research", "#industry", "#general"],
+  //     "design-manager": ["#design", "#product", "#general"],
+  //     "data-analyst": ["#product", "#analytics", "#general"],
+  //   },
+  // },
+
   /** Connectors to enable */
   connectors: {
     github: { enabled: true },

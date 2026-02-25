@@ -61,6 +61,30 @@ export interface OpenChiefConfig {
     repo: string;
   };
 
+  /**
+   * Per-agent overrides — deployment-specific configuration.
+   *
+   * Channel filters tell agents which Slack/Discord channels to focus on.
+   * These are org-specific and should NOT go in agent JSON definitions
+   * (which are generic and open-source). Instead, configure them here
+   * and the seed script merges them into subscriptions at seed time.
+   */
+  agents?: {
+    /**
+     * Map of agent ID → list of channel names to focus on.
+     * Applied as a scopeFilter.project on the agent's Slack subscription.
+     *
+     * Example:
+     * ```
+     * channelFilters: {
+     *   "cfo": ["#finance", "#operations", "#general"],
+     *   "bizdev": ["#partnerships", "#general"],
+     * }
+     * ```
+     */
+    channelFilters?: Record<string, string[]>;
+  };
+
   /** Which connectors to enable */
   connectors: {
     [key: string]: {

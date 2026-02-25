@@ -8,17 +8,32 @@
  * into the D1 database using wrangler d1 execute.
  */
 
-import { readFileSync, readdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
+import type { OpenChiefConfig } from "@openchief/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AGENTS_DIR = join(__dirname, "../agents");
 const DB_NAME = "openchief-db";
 const WRANGLER_CONFIG = join(__dirname, "../workers/router/wrangler.jsonc");
 const D1_MODE = process.env.OPENCHIEF_D1_MODE === "remote" ? "--remote" : "--local";
+
+/** Load openchief.config.ts if it exists (deployment-specific overrides) */
+async function loadConfig(): Promise<OpenChiefConfig | null> {
+  const configPath = join(__dirname, "../openchief.config.ts");
+  if (!existsSync(configPath)) return null;
+  try {
+    const mod = await import(pathToFileURL(configPath).href);
+    return (mod.default ?? mod) as OpenChiefConfig;
+  } catch (err) {
+    console.warn(`⚠ Could not load openchief.config.ts: ${err}`);
+    return null;
+  }
+}
 
 function generateULID(): string {
   const ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -60,6 +75,13 @@ const agentFiles = process.env.OPENCHIEF_AGENT_FILES
   ? process.env.OPENCHIEF_AGENT_FILES.split(",")
   : readdirSync(AGENTS_DIR).filter((f) => f.endsWith(".json") && f !== "identity-mappings.example.json");
 
+// Load deployment-specific config for channel filter overrides
+const config = await loadConfig();
+const channelFilters = config?.agents?.channelFilters ?? {};
+if (Object.keys(channelFilters).length > 0) {
+  console.log(`Loaded channel filters for: ${Object.keys(channelFilters).join(", ")}`);
+}
+
 console.log(`Found ${agentFiles.length} agent definitions in agents/\n`);
 
 for (const file of agentFiles) {
@@ -77,11 +99,20 @@ for (const file of agentFiles) {
     `INSERT OR REPLACE INTO agent_definitions (id, name, description, config, enabled, created_at, updated_at) VALUES ('${sqlEscape(agent.id)}', '${sqlEscape(agent.name)}', '${sqlEscape(agent.description)}', '${sqlEscape(JSON.stringify(agent))}', ${agent.enabled ? 1 : 0}, '${now}', '${now}');`
   );
 
-  // Insert subscriptions
+  // Insert subscriptions — merge channel filters from config if present
+  const agentChannels = channelFilters[agent.id];
   for (const sub of agent.subscriptions) {
     const subId = generateULID();
+
+    // Merge deployment-specific channel filters into Slack subscriptions
+    let scopeFilter = sub.scopeFilter ?? null;
+    if (agentChannels && (sub.source === "slack" || sub.source === "discord")) {
+      scopeFilter = { ...scopeFilter, project: agentChannels };
+      console.log(`  → Applied channel filter to ${sub.source}: ${agentChannels.join(", ")}`);
+    }
+
     statements.push(
-      `INSERT OR REPLACE INTO agent_subscriptions (id, agent_id, source, event_types, scope_filter) VALUES ('${subId}', '${sqlEscape(agent.id)}', '${sqlEscape(sub.source)}', '${sqlEscape(JSON.stringify(sub.eventTypes))}', ${sub.scopeFilter ? `'${sqlEscape(JSON.stringify(sub.scopeFilter))}'` : "NULL"});`
+      `INSERT OR REPLACE INTO agent_subscriptions (id, agent_id, source, event_types, scope_filter) VALUES ('${subId}', '${sqlEscape(agent.id)}', '${sqlEscape(sub.source)}', '${sqlEscape(JSON.stringify(sub.eventTypes))}', ${scopeFilter ? `'${sqlEscape(JSON.stringify(scopeFilter))}'` : "NULL"});`
     );
   }
 

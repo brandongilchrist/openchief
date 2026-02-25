@@ -10,6 +10,10 @@
     {
       "source": "rippling",
       "eventTypes": ["employee.*", "payroll.*", "timeoff.*"]
+    },
+    {
+      "source": "quickbooks",
+      "eventTypes": ["*"]
     }
   ],
   "persona": {
