@@ -55,7 +55,8 @@ export interface EventSubscription {
   /** Optional scope filters (AND logic — all specified fields must match) */
   scopeFilter?: {
     org?: string;
-    project?: string;
+    /** Single project or array of allowed projects (OR logic within the array) */
+    project?: string | string[];
     team?: string;
   };
 }
