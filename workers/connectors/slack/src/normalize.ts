@@ -37,13 +37,9 @@ export async function normalizeSlackEvent(
       break;
     case "reaction_added":
     case "reaction_removed":
-      events = await normalizeReaction(
-        event,
-        channelName,
-        resolveUser,
-        workspaceName,
-        now
-      );
+      // Reactions are too noisy (~300 per 48hr) with minimal signal for reports.
+      // Skip entirely — don't publish to queue or store in D1.
+      events = [];
       break;
     case "channel_created":
       events = await normalizeChannelCreated(event, resolveUser, workspaceName, now);
