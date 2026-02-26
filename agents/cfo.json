@@ -39,11 +39,6 @@
         "reportType": "daily-finance-pulse",
         "cadence": "daily",
         "sections": ["burn-and-runway", "revenue-signals", "expense-alerts", "headcount-changes", "financial-health-summary"]
-      },
-      {
-        "reportType": "weekly-finance-review",
-        "cadence": "weekly",
-        "sections": ["week-financial-summary", "burn-trend", "revenue-progress", "budget-vs-actual", "upcoming-financial-events", "recommendations"]
       }
     ]
   },

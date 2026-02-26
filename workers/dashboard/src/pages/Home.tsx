@@ -23,11 +23,9 @@ function todayYesterday(): { today: string; yesterday: string } {
   return { today, yesterday };
 }
 
-/** Find the first daily report whose createdAt falls on the given local date. */
+/** Find the first report whose createdAt falls on the given local date. */
 function reportForDate(reports: AgentReport[], date: string): AgentReport | undefined {
   return reports.find((r) => {
-    // Only match daily reports (skip weekly) for today/yesterday cards
-    if (r.reportType?.includes("weekly")) return false;
     // Compare in local time so the card matches what the user sees
     const local = new Date(r.createdAt).toLocaleDateString("en-CA");
     return local === date;

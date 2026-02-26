@@ -40,8 +40,8 @@ Every agent JSON file must have these fields:
   "outputs": {
     "reports": [
       {
-        "reportType": string,    // Unique type ID: "daily-standup", "weekly-summary"
-        "cadence": "daily" | "weekly",
+        "reportType": string,    // Unique type ID: "daily-standup", "daily-metrics-brief"
+        "cadence": "daily",
         "sections": string[]     // Section names Claude must include
       }
     ]

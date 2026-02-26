@@ -33,11 +33,6 @@
         "reportType": "daily-legal-scan",
         "cadence": "daily",
         "sections": ["immediate-flags", "regulatory-signals", "contract-risks", "ip-concerns", "privacy-signals", "legal-health-summary"]
-      },
-      {
-        "reportType": "weekly-legal-review",
-        "cadence": "weekly",
-        "sections": ["week-legal-summary", "risk-register", "regulatory-landscape", "contract-pipeline", "ip-audit", "recommendations"]
       }
     ]
   },

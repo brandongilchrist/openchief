@@ -39,11 +39,6 @@
         "reportType": "daily-bd-pulse",
         "cadence": "daily",
         "sections": ["pipeline-snapshot", "deal-updates", "new-opportunities", "competitive-intel", "bd-health-summary"]
-      },
-      {
-        "reportType": "weekly-bd-review",
-        "cadence": "weekly",
-        "sections": ["week-bd-summary", "pipeline-movement", "deal-health", "ecosystem-map", "competitive-landscape", "priorities"]
       }
     ]
   },

@@ -56,11 +56,6 @@
         "reportType": "daily-product-pulse",
         "cadence": "daily",
         "sections": ["customer-feedback", "shipping-progress", "product-signals", "internal-alignment"]
-      },
-      {
-        "reportType": "weekly-product-review",
-        "cadence": "weekly",
-        "sections": ["week-highlights", "customer-themes", "shipping-summary", "metrics-trends", "next-week-priorities"]
       }
     ]
   },

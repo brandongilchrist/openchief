@@ -171,11 +171,18 @@ function buildUserPrompt(
     parts.push(`\n═══ HISTORICAL CONTEXT ═══\n${ragContext}`);
   }
 
-  // Recent reports for comparison
+  // Recent reports for comparison — cap each to prevent context overflow
   if (recentReports.length > 0) {
     parts.push("\n═══ PREVIOUS REPORTS (for trend comparison) ═══");
     for (const report of recentReports) {
-      parts.push(report);
+      if (report.length > MAX_RECENT_REPORT_CHARS) {
+        parts.push(
+          report.slice(0, MAX_RECENT_REPORT_CHARS) +
+            `\n[... truncated — ${report.length - MAX_RECENT_REPORT_CHARS} chars omitted]`
+        );
+      } else {
+        parts.push(report);
+      }
     }
   }
 
@@ -366,18 +373,28 @@ function computeAggregates(events: EventRow[]): string {
 /**
  * Character budget for the events section of the prompt.
  *
- * Claude's context window is 200K tokens (~800K chars). We reserve room for:
- *   - System prompt:    ~5K chars  (~1.3K tokens)
- *   - Aggregates:       ~1K chars
- *   - RAG context:      ~3K chars
- *   - Recent reports:   ~15K chars (~5K tokens for 3 reports)
- *   - Pending tasks:    ~1K chars
- *   - Output budget:    ~16K chars (4K tokens output constraint)
- *   - Safety margin:    ~60K chars
+ * Claude's context window is 200K tokens. Technical content (GitHub events,
+ * code snippets, PR descriptions) encodes at ~2.8 chars/token — much denser
+ * than prose text. We budget conservatively:
  *
- * That leaves ~600K chars for events (~150K tokens).
+ *   - System prompt + team list:  ~15K chars  (~5K tokens)
+ *   - Aggregates:                  ~1K chars
+ *   - RAG context:                 ~3K chars
+ *   - Recent reports (capped):    ~18K chars  (~6K tokens for 3 × 6K reports)
+ *   - Pending tasks:               ~1K chars
+ *   - Output budget:              ~16K chars  (~4K tokens reserved for output)
+ *   - Safety margin:              ~46K chars
+ *
+ * Events budget: 300K chars → ~107K tokens.
+ * Total estimated: ~128K tokens (well under 200K limit).
  */
-const MAX_EVENT_CHARS = 600_000;
+const MAX_EVENT_CHARS = 300_000;
+
+/**
+ * Character budget per recent report (3 reports × 6K chars = 18K total).
+ * Prevents large historical reports from blowing up the context window.
+ */
+const MAX_RECENT_REPORT_CHARS = 6_000;
 
 /**
  * Trim events to fit within the character budget, keeping the most recent.

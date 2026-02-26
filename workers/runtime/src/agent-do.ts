@@ -202,15 +202,11 @@ export class AgentDurableObject extends DurableObject<Env> {
         const hasDaily = config.outputs.reports.some(
           (r) => r.cadence === "daily"
         );
-        const hasWeekly = config.outputs.reports.some(
-          (r) => r.cadence === "weekly"
-        );
-        if (hasDaily || hasWeekly) {
-          const alarmType = hasDaily ? "daily" : "weekly";
+        if (hasDaily) {
           const tz = this.env.REPORT_TIMEZONE || "America/Chicago";
           const { hour, minute } = getAgentReportTime(agentId);
           const alarmTime = nextWeekdayAlarm(hour, minute, tz);
-          await this.ctx.storage.put("pending_alarm_type", alarmType);
+          await this.ctx.storage.put("pending_alarm_type", "daily");
           await this.ctx.storage.setAlarm(alarmTime.getTime());
           console.log(
             `Bootstrapped ${agentId} alarm for ${alarmTime.toISOString()} (${hour}:${String(minute).padStart(2, "0")} ${tz})`
@@ -238,10 +234,9 @@ export class AgentDurableObject extends DurableObject<Env> {
       await this.executeNextTask(config);
     } else {
       // Report generation alarm
-      const reportConfig = config.outputs.reports.find((r) => {
-        if (alarmType === "weekly") return r.reportType.includes("weekly");
-        return r.cadence === "daily";
-      });
+      const reportConfig = config.outputs.reports.find(
+        (r) => r.cadence === "daily"
+      );
 
       if (reportConfig) {
         await this.generateReport(reportConfig, config);
@@ -927,11 +922,9 @@ export class AgentDurableObject extends DurableObject<Env> {
       asOf ? asOf + "T23:59:59-06:00" : Date.now()
     ).getUTCDay();
     const lookbackHours =
-      reportConfig.cadence === "weekly"
-        ? 8 * 24
-        : anchorDay === 1
-          ? 72   // Monday: cover the weekend
-          : 25;  // Tue–Fri: ~1 day with 1hr overlap buffer
+      anchorDay === 1
+        ? 72   // Monday: cover the weekend
+        : 25;  // Tue–Fri: ~1 day with 1hr overlap buffer
 
     const anchorMs = asOf
       ? new Date(asOf + "T23:59:59-06:00").getTime()
@@ -949,10 +942,10 @@ export class AgentDurableObject extends DurableObject<Env> {
       config.visibility
     );
 
-    // Skip if no events (unless weekly or CEO meeting — CEO reads other reports)
+    // Skip if no events (unless CEO meeting — CEO reads other agents' reports)
     const isCeoMeeting =
       config.id === "ceo" && reportConfig.reportType === "daily-meeting";
-    if (events.length === 0 && reportConfig.cadence !== "weekly" && !isCeoMeeting) {
+    if (events.length === 0 && !isCeoMeeting) {
       return null;
     }
 
@@ -1032,11 +1025,7 @@ export class AgentDurableObject extends DurableObject<Env> {
       );
     }
 
-    const reportJobType = isCeoMeeting
-      ? "daily-meeting"
-      : reportConfig.cadence === "weekly"
-        ? "weekly-report"
-        : "daily-report";
+    const reportJobType = isCeoMeeting ? "daily-meeting" : "daily-report";
     const modelSettings = await this.getModelSettings(reportJobType);
     const response = await callClaude(
       this.env.ANTHROPIC_API_KEY,
@@ -1454,7 +1443,6 @@ export class AgentDurableObject extends DurableObject<Env> {
     const defaults: Record<string, { model: string; maxTokens: number }> = {
       "daily-report": { model: defaultModel, maxTokens: 8192 },
       "daily-meeting": { model: defaultModel, maxTokens: 16384 },
-      "weekly-report": { model: defaultModel, maxTokens: 8192 },
       chat: { model: defaultModel, maxTokens: 8192 },
     };
 
@@ -1650,36 +1638,14 @@ export class AgentDurableObject extends DurableObject<Env> {
 
     // Candidate 1: Next report time
     let nextReport: Date | null = null;
-    let reportType = "daily";
 
     const hasDaily = config.outputs.reports.some(
       (r) => r.cadence === "daily"
-    );
-    const hasWeekly = config.outputs.reports.some(
-      (r) => r.cadence === "weekly"
     );
 
     if (hasDaily) {
       const { hour, minute } = getAgentReportTime(config.id);
       nextReport = nextWeekdayAlarm(hour, minute, tz, true);
-      reportType = "daily";
-    } else if (hasWeekly) {
-      const { hour, minute } = getAgentReportTime(config.id);
-      // Find next Monday
-      const now = new Date();
-      for (let d = 1; d <= 7; d++) {
-        const candidate = new Date(now);
-        candidate.setUTCDate(candidate.getUTCDate() + d);
-        candidate.setUTCHours(hour, minute, 0, 0);
-        const offset = tzOffsetMs(candidate, tz);
-        const utc = new Date(candidate.getTime() - offset);
-        const localDay = new Date(utc.getTime() + offset).getUTCDay();
-        if (localDay === 1) {
-          nextReport = utc;
-          reportType = "weekly";
-          break;
-        }
-      }
     }
 
     // Candidate 2: Next task check (hourly, business hours 8am-6pm, weekdays only)
@@ -1728,11 +1694,11 @@ export class AgentDurableObject extends DurableObject<Env> {
         alarmType = "task";
       } else {
         alarmTime = nextReport;
-        alarmType = reportType;
+        alarmType = "daily";
       }
     } else if (nextReport) {
       alarmTime = nextReport;
-      alarmType = reportType;
+      alarmType = "daily";
     } else if (nextTask) {
       alarmTime = nextTask;
       alarmType = "task";

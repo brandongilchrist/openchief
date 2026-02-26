@@ -36,11 +36,6 @@
         "reportType": "daily-security-brief",
         "cadence": "daily",
         "sections": ["critical-alerts", "vulnerability-status", "secrets-audit", "cicd-changes", "threat-intel", "security-posture"]
-      },
-      {
-        "reportType": "weekly-security-review",
-        "cadence": "weekly",
-        "sections": ["week-security-summary", "vulnerability-trends", "remediation-progress", "access-control-changes", "threat-landscape", "recommendations"]
       }
     ]
   },

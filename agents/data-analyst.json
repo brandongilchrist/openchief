@@ -54,20 +54,6 @@
           "anomalies-and-alerts",
           "data-questions-answered"
         ]
-      },
-      {
-        "reportType": "weekly-analytics-deep-dive",
-        "cadence": "weekly",
-        "sections": [
-          "executive-summary",
-          "growth-metrics",
-          "retention-cohort-analysis",
-          "user-composition-trends",
-          "engagement-metrics",
-          "recommendations",
-          "measurement-gaps",
-          "metrics-to-watch"
-        ]
       }
     ]
   },

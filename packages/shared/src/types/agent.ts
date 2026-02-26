@@ -86,11 +86,11 @@ export interface AgentOutputConfig {
 }
 
 export interface ReportConfig {
-  /** e.g. "daily-standup", "weekly-summary", "alert" */
+  /** e.g. "daily-standup", "daily-metrics-brief", "daily-meeting" */
   reportType: string;
 
-  /** How often this report is generated */
-  cadence: "daily" | "weekly";
+  /** Report generation cadence */
+  cadence: "daily";
 
   /** Sections this report should contain */
   sections: string[];

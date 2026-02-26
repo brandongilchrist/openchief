@@ -20,6 +20,7 @@ interface Env {
   SLACK_SIGNING_SECRET: string;
   ADMIN_SECRET: string;
   IGNORED_CHANNELS?: string;
+  IGNORE_BOTS?: string;
   KV: KVNamespace;
   DB: D1Database;
 }
@@ -72,6 +73,21 @@ export default {
         return Response.json({ ok: true, result }, { status: 200 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Backfill failed";
+        return Response.json({ ok: false, error: msg }, { status: 500 });
+      }
+    }
+
+    // GET /channels -- list available Slack channels (admin only)
+    if (url.pathname === "/channels" && request.method === "GET") {
+      const denied = requireAdmin(request, env);
+      if (denied) return denied;
+      try {
+        const raw = await env.KV.get("slack:channels:list");
+        const channels: Array<{ id: string; name: string; is_private?: boolean }> =
+          raw ? JSON.parse(raw) : [];
+        return Response.json({ ok: true, channels });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Failed to list channels";
         return Response.json({ ok: false, error: msg }, { status: 500 });
       }
     }
@@ -183,7 +199,7 @@ async function handleEventCallback(
       channelName,
       resolver,
       workspaceName,
-      isPrivateChannel
+      { isPrivateChannel, ignoreBots: env.IGNORE_BOTS !== "false" }
     );
 
     // Enqueue

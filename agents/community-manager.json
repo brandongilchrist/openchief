@@ -36,11 +36,6 @@
         "reportType": "daily-community-pulse",
         "cadence": "daily",
         "sections": ["engagement-summary", "sentiment-check", "hot-topics", "growth-signals", "external-mentions"]
-      },
-      {
-        "reportType": "weekly-community-review",
-        "cadence": "weekly",
-        "sections": ["week-highlights", "engagement-trends", "community-growth", "content-themes", "recommendations"]
       }
     ]
   },

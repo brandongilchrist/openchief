@@ -24,6 +24,9 @@ import {
   Heart,
   Flag,
   ListTodo,
+  Hash,
+  Loader2,
+  Save,
 } from "lucide-react";
 import {
   BarChart,
@@ -73,6 +76,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { HealthBadge } from "@/components/HealthBadge";
 import { SourceIcon } from "@/components/SourceIcon";
 
@@ -151,9 +157,12 @@ const CONFIG_CARDS: CardDef[] = [
     getSummary: (a) => {
       const subCount = a.subscriptions.length;
       const toolCount = a.tools?.length ?? 0;
+      const channelCount = getSlackChannels(a).length;
       const parts = [
         `${subCount} subscription${subCount !== 1 ? "s" : ""}`,
       ];
+      if (channelCount > 0)
+        parts.push(`${channelCount} channel${channelCount !== 1 ? "s" : ""}`);
       if (toolCount > 0)
         parts.push(`${toolCount} tool${toolCount !== 1 ? "s" : ""}`);
       return parts.join(", ");
@@ -685,6 +694,36 @@ export function AgentDetail() {
                 await saveAgent({ ...agent, subscriptions: subs });
               }}
             />
+
+            {/* Slack Channel Picker — only when agent has Slack subscriptions */}
+            {agent.subscriptions.some((s) => s.source === "slack") && (
+              <>
+                <Separator />
+                <SlackChannelPicker
+                  selectedChannels={getSlackChannels(agent)}
+                  onSave={async (channels) => {
+                    const updated = {
+                      ...agent,
+                      subscriptions: agent.subscriptions.map((sub) =>
+                        sub.source === "slack"
+                          ? {
+                              ...sub,
+                              scopeFilter:
+                                channels.length > 0
+                                  ? { ...sub.scopeFilter, project: channels }
+                                  : sub.scopeFilter?.org || sub.scopeFilter?.team
+                                    ? { ...sub.scopeFilter, project: undefined }
+                                    : undefined,
+                            }
+                          : sub,
+                      ),
+                    };
+                    await saveAgent(updated);
+                  }}
+                />
+              </>
+            )}
+
             {agent.tools && agent.tools.length > 0 && (
               <div>
                 <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -1708,6 +1747,7 @@ function EditableSubscriptions({
       subscriptions.map((s) => ({
         ...s,
         eventTypes: [...s.eventTypes],
+        scopeFilter: s.scopeFilter ? { ...s.scopeFilter } : undefined,
       })),
     );
     setEditing(true);
@@ -1821,16 +1861,247 @@ function EditableSubscriptions({
         </div>
       ) : (
         <div className="mt-2 flex flex-wrap gap-2">
-          {subscriptions.map((sub, i) => (
-            <Badge key={i} variant="secondary">
-              {sub.source}: {sub.eventTypes.join(", ")}
-            </Badge>
-          ))}
+          {subscriptions.map((sub, i) => {
+            const projects = sub.scopeFilter?.project;
+            const channelCount = projects
+              ? Array.isArray(projects)
+                ? projects.length
+                : 1
+              : 0;
+            return (
+              <Badge key={i} variant="secondary">
+                {sub.source}: {sub.eventTypes.join(", ")}
+                {channelCount > 0 && (
+                  <span className="ml-1 text-muted-foreground">
+                    · {channelCount} channel{channelCount !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </Badge>
+            );
+          })}
           {subscriptions.length === 0 && (
             <p className="text-sm italic text-muted-foreground/50">
               No subscriptions configured
             </p>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  SlackChannelPicker — searchable multi-select for channel filters  */
+/* ------------------------------------------------------------------ */
+
+interface SlackChannel {
+  id: string;
+  name: string;
+  is_private?: boolean;
+}
+
+function getSlackChannels(agent: AgentDefinition): string[] {
+  for (const sub of agent.subscriptions) {
+    if (sub.source === "slack" && sub.scopeFilter?.project) {
+      return Array.isArray(sub.scopeFilter.project)
+        ? sub.scopeFilter.project
+        : [sub.scopeFilter.project];
+    }
+  }
+  return [];
+}
+
+function SlackChannelPicker({
+  selectedChannels,
+  onSave,
+}: {
+  selectedChannels: string[];
+  onSave: (channels: string[]) => Promise<void>;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [channels, setChannels] = useState<SlackChannel[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [initialSelected, setInitialSelected] = useState<Set<string>>(
+    new Set(),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const loadChannels = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.get<{
+        ok: boolean;
+        channels: SlackChannel[];
+        error?: string;
+      }>("connections/slack/channels");
+      if (!data.ok) {
+        setError(data.error || "Failed to load channels");
+        return;
+      }
+      setChannels(data.channels);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load channels",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadChannels();
+  }, [loadChannels]);
+
+  // Initialize selected from props (strip # prefix to match API data)
+  useEffect(() => {
+    const sel = new Set(selectedChannels.map((c) => c.replace(/^#/, "")));
+    setSelected(sel);
+    setInitialSelected(new Set(sel));
+  }, [selectedChannels]);
+
+  const hasChanges = useMemo(() => {
+    if (selected.size !== initialSelected.size) return true;
+    for (const name of selected) {
+      if (!initialSelected.has(name)) return true;
+    }
+    return false;
+  }, [selected, initialSelected]);
+
+  function toggleChannel(name: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const channelNames = [...selected].map((name) => `#${name}`);
+      await onSave(channelNames);
+      setInitialSelected(new Set(selected));
+      toast.success("Channel filters saved");
+    } catch {
+      toast.error("Failed to save channel filters");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const filtered = channels.filter((ch) =>
+    ch.name.toLowerCase().includes(filter.toLowerCase()),
+  );
+
+  const grouped = useMemo(() => {
+    const publicChannels = filtered.filter((ch) => !ch.is_private);
+    const privateChannels = filtered.filter((ch) => ch.is_private);
+    const groups: Array<{ label: string; channels: SlackChannel[] }> = [];
+    if (publicChannels.length > 0)
+      groups.push({ label: "Public Channels", channels: publicChannels });
+    if (privateChannels.length > 0)
+      groups.push({ label: "Private Channels", channels: privateChannels });
+    return groups;
+  }, [filtered]);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Hash className="h-4 w-4 text-muted-foreground" />
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Slack Channels
+          </span>
+        </div>
+        {selected.size > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {selected.size} channel{selected.size !== 1 ? "s" : ""} selected
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-sm">Loading channels from Slack...</span>
+        </div>
+      ) : error ? (
+        <div className="mt-2 rounded-lg border border-destructive/50 bg-destructive/5 p-4">
+          <p className="text-sm text-destructive">{error}</p>
+        </div>
+      ) : (
+        <div className="mt-2 space-y-3">
+          {channels.length > 10 && (
+            <Input
+              placeholder="Filter channels..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="text-sm"
+            />
+          )}
+          <div className="max-h-60 space-y-3 overflow-y-auto rounded-md border border-border p-2">
+            {grouped.map((group) => (
+              <div key={group.label}>
+                <p className="mb-1 px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  {group.label}
+                </p>
+                <div className="space-y-0.5">
+                  {group.channels.map((ch) => (
+                    <label
+                      key={ch.id}
+                      className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted"
+                    >
+                      <Checkbox
+                        checked={selected.has(ch.name)}
+                        onCheckedChange={() => toggleChannel(ch.name)}
+                      />
+                      <span className="text-sm">#{ch.name}</span>
+                      {ch.is_private && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          private
+                        </Badge>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {filtered.length === 0 && (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                {channels.length === 0
+                  ? "No channels found. Run a Slack sync first."
+                  : "No matches"}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              {selected.size === 0
+                ? "No filter — all channels monitored"
+                : `${selected.size} of ${channels.length} channels monitored`}
+            </p>
+            <Button
+              onClick={handleSave}
+              disabled={!hasChanges || saving}
+              size="sm"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="mr-1.5 h-3.5 w-3.5" />
+                  Save
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -1938,7 +2209,6 @@ function EditableReportTypes({
                   className="rounded border border-input bg-background px-2 py-1 text-sm outline-none focus:border-ring"
                 >
                   <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
                 </select>
               </div>
               <input
