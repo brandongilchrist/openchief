@@ -97,6 +97,7 @@ const CONNECTOR_CONFIGS: Record<string, ConnectorConfig> = {
     fields: [
       { name: "SLACK_BOT_TOKEN", label: "Bot Token", secret: true, placeholder: "xoxb-..." },
       { name: "SLACK_SIGNING_SECRET", label: "Signing Secret", secret: true },
+      { name: "IGNORE_BOTS", label: "Ignore Bot Messages", secret: false, placeholder: "true (default) — set to false to include bot messages" },
       { name: "ADMIN_SECRET", label: "Admin Secret", secret: true },
     ],
   },
@@ -2806,37 +2807,22 @@ async function handleJobsStatus(request: Request, env: Env): Promise<Response> {
 
   function computeNextRunAt(cadence: string): string | null {
     // Daily reports run Mon-Fri at reportHour:00 UTC
-    // Weekly reports run on Monday at reportHour:00 UTC
+    if (cadence !== "daily") return null;
+
     const target = new Date(now);
     target.setUTCHours(reportHour, 0, 0, 0);
 
-    if (cadence === "daily") {
-      // If today's run time hasn't passed yet and it's a weekday, use today
-      const dow = target.getUTCDay(); // 0=Sun, 6=Sat
-      if (target > now && dow >= 1 && dow <= 5) {
-        return target.toISOString();
-      }
-      // Otherwise find next weekday
+    // If today's run time hasn't passed yet and it's a weekday, use today
+    const dow = target.getUTCDay(); // 0=Sun, 6=Sat
+    if (target > now && dow >= 1 && dow <= 5) {
+      return target.toISOString();
+    }
+    // Otherwise find next weekday
+    target.setUTCDate(target.getUTCDate() + 1);
+    while (target.getUTCDay() === 0 || target.getUTCDay() === 6) {
       target.setUTCDate(target.getUTCDate() + 1);
-      while (target.getUTCDay() === 0 || target.getUTCDay() === 6) {
-        target.setUTCDate(target.getUTCDate() + 1);
-      }
-      return target.toISOString();
     }
-
-    if (cadence === "weekly") {
-      // Next Monday at reportHour:00 UTC
-      const dow = target.getUTCDay();
-      if (dow === 1 && target > now) {
-        return target.toISOString(); // It's Monday and hasn't run yet
-      }
-      // Find next Monday
-      const daysUntilMonday = dow === 0 ? 1 : (8 - dow);
-      target.setUTCDate(target.getUTCDate() + daysUntilMonday);
-      return target.toISOString();
-    }
-
-    return null;
+    return target.toISOString();
   }
 
   const jobs = (agentRows || []).map((row) => {
@@ -2879,7 +2865,6 @@ async function handleListModels(env: Env): Promise<Response> {
     // Fill in defaults for job types not yet in the table
     const defaults: Record<string, string> = {
       "daily-report": "claude-sonnet-4-6",
-      "weekly-report": "claude-sonnet-4-6",
       chat: "claude-sonnet-4-6",
     };
 
@@ -2899,7 +2884,6 @@ async function handleListModels(env: Env): Promise<Response> {
     // Table may not exist yet — return defaults
     return json([
       { jobType: "daily-report", model: "claude-sonnet-4-6", updatedAt: null },
-      { jobType: "weekly-report", model: "claude-sonnet-4-6", updatedAt: null },
       { jobType: "chat", model: "claude-sonnet-4-6", updatedAt: null },
     ]);
   }
@@ -2913,7 +2897,7 @@ async function handleUpdateModel(
   env: Env,
   jobType: string
 ): Promise<Response> {
-  const validJobTypes = new Set(["daily-report", "weekly-report", "chat"]);
+  const validJobTypes = new Set(["daily-report", "chat"]);
   if (!validJobTypes.has(jobType)) {
     return errorJson(
       `Invalid job type. Must be one of: ${[...validJobTypes].join(", ")}`

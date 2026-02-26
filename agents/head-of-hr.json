@@ -37,11 +37,6 @@
         "reportType": "daily-people-pulse",
         "cadence": "daily",
         "sections": ["team-sentiment", "hiring-pipeline", "onboarding-status", "culture-signals", "hr-changes"]
-      },
-      {
-        "reportType": "weekly-people-review",
-        "cadence": "weekly",
-        "sections": ["week-people-summary", "sentiment-trends", "hiring-progress", "culture-health", "recognition-highlights", "recommendations"]
       }
     ]
   },

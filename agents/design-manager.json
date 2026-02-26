@@ -36,11 +36,6 @@
         "reportType": "daily-design-digest",
         "cadence": "daily",
         "sections": ["active-design-work", "design-reviews", "design-system-health", "cross-functional-signals"]
-      },
-      {
-        "reportType": "weekly-design-review",
-        "cadence": "weekly",
-        "sections": ["week-highlights", "design-velocity", "collaboration-health", "system-updates", "next-week-outlook"]
       }
     ]
   },

@@ -45,11 +45,6 @@
         "reportType": "daily-marketing-pulse",
         "cadence": "daily",
         "sections": ["social-performance", "content-status", "community-health", "campaign-updates", "competitive-signals", "marketing-priorities"]
-      },
-      {
-        "reportType": "weekly-marketing-review",
-        "cadence": "weekly",
-        "sections": ["week-marketing-summary", "brand-health-metrics", "content-performance", "community-growth", "campaign-results", "competitive-landscape", "priorities"]
       }
     ]
   },

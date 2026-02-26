@@ -40,11 +40,6 @@
         "reportType": "daily-standup",
         "cadence": "daily",
         "sections": ["shipping-velocity", "pr-review-status", "build-health", "blockers-and-risks", "team-workload"]
-      },
-      {
-        "reportType": "weekly-summary",
-        "cadence": "weekly",
-        "sections": ["week-highlights", "shipping-metrics", "code-quality-trends", "team-health", "next-week-outlook"]
       }
     ]
   },

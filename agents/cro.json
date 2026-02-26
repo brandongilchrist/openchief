@@ -44,11 +44,6 @@
         "reportType": "daily-revenue-pulse",
         "cadence": "daily",
         "sections": ["funnel-overview", "traffic-performance", "engagement-metrics", "revenue-signals", "competitive-intel", "growth-score"]
-      },
-      {
-        "reportType": "weekly-growth-review",
-        "cadence": "weekly",
-        "sections": ["week-growth-summary", "funnel-metrics", "channel-performance", "revenue-trends", "competitive-landscape", "growth-priorities"]
       }
     ]
   },

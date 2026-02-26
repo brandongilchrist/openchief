@@ -202,15 +202,11 @@ export class AgentDurableObject extends DurableObject<Env> {
         const hasDaily = config.outputs.reports.some(
           (r) => r.cadence === "daily"
         );
-        const hasWeekly = config.outputs.reports.some(
-          (r) => r.cadence === "weekly"
-        );
-        if (hasDaily || hasWeekly) {
-          const alarmType = hasDaily ? "daily" : "weekly";
+        if (hasDaily) {
           const tz = this.env.REPORT_TIMEZONE || "America/Chicago";
           const { hour, minute } = getAgentReportTime(agentId);
           const alarmTime = nextWeekdayAlarm(hour, minute, tz);
-          await this.ctx.storage.put("pending_alarm_type", alarmType);
+          await this.ctx.storage.put("pending_alarm_type", "daily");
           await this.ctx.storage.setAlarm(alarmTime.getTime());
           console.log(
             `Bootstrapped ${agentId} alarm for ${alarmTime.toISOString()} (${hour}:${String(minute).padStart(2, "0")} ${tz})`
@@ -238,10 +234,9 @@ export class AgentDurableObject extends DurableObject<Env> {
       await this.executeNextTask(config);
     } else {
       // Report generation alarm
-      const reportConfig = config.outputs.reports.find((r) => {
-        if (alarmType === "weekly") return r.reportType.includes("weekly");
-        return r.cadence === "daily";
-      });
+      const reportConfig = config.outputs.reports.find(
+        (r) => r.cadence === "daily"
+      );
 
       if (reportConfig) {
         await this.generateReport(reportConfig, config);
@@ -750,7 +745,11 @@ export class AgentDurableObject extends DurableObject<Env> {
     subscriptions: Array<{
       source: string;
       eventTypes: string[];
-      scopeFilter?: { org?: string; project?: string; team?: string };
+      scopeFilter?: {
+        org?: string;
+        project?: string | string[];
+        team?: string;
+      };
     }>,
     cutoff: string,
     nowStr: string,
@@ -765,6 +764,14 @@ export class AgentDurableObject extends DurableObject<Env> {
       payload: string;
     }>
   > {
+    type EventRow = {
+      timestamp: string;
+      source: string;
+      event_type: string;
+      summary: string;
+      payload: string;
+    };
+
     // Non-exec agents cannot see exec-tagged events (private Slack channels)
     const excludeExec = agentVisibility !== "exec";
     const execFilter = excludeExec
@@ -780,19 +787,15 @@ export class AgentDurableObject extends DurableObject<Env> {
         ORDER BY timestamp ASC
         LIMIT ?`;
       const result = await this.env.DB.prepare(sql).bind(cutoff, nowStr, limit).all();
-      return result.results as Array<{
-        timestamp: string;
-        source: string;
-        event_type: string;
-        summary: string;
-        payload: string;
-      }>;
+      return result.results as EventRow[];
     }
 
-    const params: unknown[] = [cutoff, nowStr];
-    const subClauses: string[] = [];
-
-    for (const sub of subscriptions) {
+    // Per-source fetching: query each subscription independently.
+    // The limit parameter is applied per-source (not divided across sources)
+    // so every source gets a fair share. The prompt builder applies a character
+    // budget to prevent context window overflow.
+    const statements = subscriptions.map((sub) => {
+      const params: unknown[] = [cutoff, nowStr];
       const parts: string[] = [];
 
       parts.push(`source = ?`);
@@ -822,8 +825,13 @@ export class AgentDurableObject extends DurableObject<Env> {
           params.push(sub.scopeFilter.org);
         }
         if (sub.scopeFilter.project) {
-          parts.push(`scope_project = ?`);
-          params.push(sub.scopeFilter.project);
+          const projects = Array.isArray(sub.scopeFilter.project)
+            ? sub.scopeFilter.project
+            : [sub.scopeFilter.project];
+          parts.push(
+            `scope_project IN (${projects.map(() => "?").join(", ")})`
+          );
+          params.push(...projects);
         }
         if (sub.scopeFilter.team) {
           parts.push(`scope_team = ?`);
@@ -831,28 +839,33 @@ export class AgentDurableObject extends DurableObject<Env> {
         }
       }
 
-      subClauses.push(`(${parts.join(" AND ")})`);
+      params.push(limit);
+
+      const sql = `SELECT timestamp, source, event_type, summary, payload
+        FROM events
+        WHERE timestamp >= ? AND timestamp <= ?
+          AND ${parts.join(" AND ")}
+          ${execFilter}
+        ORDER BY timestamp DESC
+        LIMIT ?`;
+
+      return this.env.DB.prepare(sql).bind(...params);
+    });
+
+    // D1 batch executes all queries in a single round-trip
+    const batchResults = await this.env.DB.batch<EventRow>(statements);
+
+    // Merge and sort chronologically
+    const merged: EventRow[] = [];
+    for (const result of batchResults) {
+      merged.push(...(result.results as EventRow[]));
     }
+    merged.sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
 
-    params.push(limit);
-
-    const sql = `SELECT timestamp, source, event_type, summary, payload
-      FROM events
-      WHERE timestamp >= ? AND timestamp <= ?
-        AND (${subClauses.join(" OR ")})
-        ${execFilter}
-      ORDER BY timestamp ASC
-      LIMIT ?`;
-
-    const result = await this.env.DB.prepare(sql).bind(...params).all();
-
-    return result.results as Array<{
-      timestamp: string;
-      source: string;
-      event_type: string;
-      summary: string;
-      payload: string;
-    }>;
+    return merged;
   }
 
   /**
@@ -863,11 +876,25 @@ export class AgentDurableObject extends DurableObject<Env> {
     config: AgentDefinition,
     asOf?: string
   ): Promise<AgentReport | null> {
-    // Dedup guard: Cloudflare DO alarms have at-least-once delivery, so
-    // the alarm handler can fire twice.  Skip if we already generated this
-    // exact report type within the last 30 minutes (unless this is a manual
-    // trigger via asOf which explicitly requests re-generation).
+    // Dedup guard (two layers):
+    // 1. DO storage — immediate, race-condition-proof within the same DO instance.
+    //    Cloudflare DO alarms have at-least-once delivery, and re-delivery can
+    //    arrive within seconds.  ctx.storage is synchronous within the DO, so
+    //    the second delivery always sees the first's write.
+    // 2. D1 fallback — catches duplicates after DO eviction/recreation.
     if (!asOf) {
+      const dedupKey = `last_report:${reportConfig.reportType}`;
+      const lastGenerated = await this.ctx.storage.get<number>(dedupKey);
+      if (lastGenerated && Date.now() - lastGenerated < 30 * 60 * 1000) {
+        console.log(
+          `Dedup (storage): skipping ${reportConfig.reportType} for ${config.id} — generated ${Math.round((Date.now() - lastGenerated) / 1000)}s ago`
+        );
+        return null;
+      }
+      // Mark BEFORE calling Claude so concurrent re-delivery is blocked.
+      // If report generation fails, the key is cleared in the catch below.
+      await this.ctx.storage.put(dedupKey, Date.now());
+
       const thirtyMinAgo = new Date(
         Date.now() - 30 * 60 * 1000
       ).toISOString();
@@ -880,22 +907,24 @@ export class AgentDurableObject extends DurableObject<Env> {
         .first<{ id: string }>();
       if (existing) {
         console.log(
-          `Dedup: skipping ${reportConfig.reportType} for ${config.id} — report ${existing.id} already exists within 30 min window`
+          `Dedup (D1): skipping ${reportConfig.reportType} for ${config.id} — report ${existing.id} already exists within 30 min window`
         );
         return null;
       }
     }
 
-    const eventLimit = 2000;
+    // If generation fails after the dedup key was set, clear it so retries work.
+    const dedupKeyForCleanup = !asOf ? `last_report:${reportConfig.reportType}` : null;
+    try {
+
+    const perSourceEventLimit = 2000;
     const anchorDay = new Date(
       asOf ? asOf + "T23:59:59-06:00" : Date.now()
     ).getUTCDay();
     const lookbackHours =
-      reportConfig.cadence === "weekly"
-        ? 8 * 24
-        : anchorDay === 1
-          ? 72
-          : 48;
+      anchorDay === 1
+        ? 72   // Monday: cover the weekend
+        : 25;  // Tue–Fri: ~1 day with 1hr overlap buffer
 
     const anchorMs = asOf
       ? new Date(asOf + "T23:59:59-06:00").getTime()
@@ -909,14 +938,14 @@ export class AgentDurableObject extends DurableObject<Env> {
       config.subscriptions,
       cutoff,
       nowStr,
-      eventLimit,
+      perSourceEventLimit,
       config.visibility
     );
 
-    // Skip if no events (unless weekly or CEO meeting — CEO reads other reports)
+    // Skip if no events (unless CEO meeting — CEO reads other agents' reports)
     const isCeoMeeting =
       config.id === "ceo" && reportConfig.reportType === "daily-meeting";
-    if (events.length === 0 && reportConfig.cadence !== "weekly" && !isCeoMeeting) {
+    if (events.length === 0 && !isCeoMeeting) {
       return null;
     }
 
@@ -996,11 +1025,7 @@ export class AgentDurableObject extends DurableObject<Env> {
       );
     }
 
-    const reportJobType = isCeoMeeting
-      ? "daily-meeting"
-      : reportConfig.cadence === "weekly"
-        ? "weekly-report"
-        : "daily-report";
+    const reportJobType = isCeoMeeting ? "daily-meeting" : "daily-report";
     const modelSettings = await this.getModelSettings(reportJobType);
     const response = await callClaude(
       this.env.ANTHROPIC_API_KEY,
@@ -1165,6 +1190,17 @@ export class AgentDurableObject extends DurableObject<Env> {
     );
 
     return report;
+
+    } catch (err) {
+      // Clear the dedup key so the report can be retried
+      if (dedupKeyForCleanup) {
+        await this.ctx.storage.delete(dedupKeyForCleanup);
+        console.error(
+          `Report generation failed for ${config.id}/${reportConfig.reportType}, dedup key cleared for retry`
+        );
+      }
+      throw err;
+    }
   }
 
   /**
@@ -1407,7 +1443,6 @@ export class AgentDurableObject extends DurableObject<Env> {
     const defaults: Record<string, { model: string; maxTokens: number }> = {
       "daily-report": { model: defaultModel, maxTokens: 8192 },
       "daily-meeting": { model: defaultModel, maxTokens: 16384 },
-      "weekly-report": { model: defaultModel, maxTokens: 8192 },
       chat: { model: defaultModel, maxTokens: 8192 },
     };
 
@@ -1603,36 +1638,14 @@ export class AgentDurableObject extends DurableObject<Env> {
 
     // Candidate 1: Next report time
     let nextReport: Date | null = null;
-    let reportType = "daily";
 
     const hasDaily = config.outputs.reports.some(
       (r) => r.cadence === "daily"
-    );
-    const hasWeekly = config.outputs.reports.some(
-      (r) => r.cadence === "weekly"
     );
 
     if (hasDaily) {
       const { hour, minute } = getAgentReportTime(config.id);
       nextReport = nextWeekdayAlarm(hour, minute, tz, true);
-      reportType = "daily";
-    } else if (hasWeekly) {
-      const { hour, minute } = getAgentReportTime(config.id);
-      // Find next Monday
-      const now = new Date();
-      for (let d = 1; d <= 7; d++) {
-        const candidate = new Date(now);
-        candidate.setUTCDate(candidate.getUTCDate() + d);
-        candidate.setUTCHours(hour, minute, 0, 0);
-        const offset = tzOffsetMs(candidate, tz);
-        const utc = new Date(candidate.getTime() - offset);
-        const localDay = new Date(utc.getTime() + offset).getUTCDay();
-        if (localDay === 1) {
-          nextReport = utc;
-          reportType = "weekly";
-          break;
-        }
-      }
     }
 
     // Candidate 2: Next task check (hourly, business hours 8am-6pm, weekdays only)
@@ -1681,11 +1694,11 @@ export class AgentDurableObject extends DurableObject<Env> {
         alarmType = "task";
       } else {
         alarmTime = nextReport;
-        alarmType = reportType;
+        alarmType = "daily";
       }
     } else if (nextReport) {
       alarmTime = nextReport;
-      alarmType = reportType;
+      alarmType = "daily";
     } else if (nextTask) {
       alarmTime = nextTask;
       alarmType = "task";

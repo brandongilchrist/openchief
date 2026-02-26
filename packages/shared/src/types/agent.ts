@@ -55,7 +55,8 @@ export interface EventSubscription {
   /** Optional scope filters (AND logic — all specified fields must match) */
   scopeFilter?: {
     org?: string;
-    project?: string;
+    /** Single project or array of allowed projects (OR logic within the array) */
+    project?: string | string[];
     team?: string;
   };
 }
@@ -85,11 +86,11 @@ export interface AgentOutputConfig {
 }
 
 export interface ReportConfig {
-  /** e.g. "daily-standup", "weekly-summary", "alert" */
+  /** e.g. "daily-standup", "daily-metrics-brief", "daily-meeting" */
   reportType: string;
 
-  /** How often this report is generated */
-  cadence: "daily" | "weekly";
+  /** Report generation cadence */
+  cadence: "daily";
 
   /** Sections this report should contain */
   sections: string[];

@@ -138,9 +138,13 @@ function buildUserPrompt(
 ): string {
   const parts: string[] = [];
 
-  // Event data
+  // Event data — apply character budget to prevent context window overflow.
+  // Events arrive sorted chronologically (oldest first). We keep the most
+  // recent events by scanning backwards from the end until the budget is full,
+  // then render in chronological order.
   if (events.length > 0) {
-    const grouped = groupEventsByCategory(events);
+    const trimmed = trimEventsToCharBudget(events);
+    const grouped = groupEventsByCategory(trimmed.events);
     parts.push("═══ EVENTS ═══");
     for (const [category, catEvents] of Object.entries(grouped)) {
       parts.push(`\n--- ${category.toUpperCase()} (${catEvents.length} events) ---`);
@@ -148,6 +152,9 @@ function buildUserPrompt(
         const detail = extractPayloadDetail(evt);
         parts.push(`[${evt.timestamp}] ${evt.summary}${detail ? `\n${detail}` : ""}`);
       }
+    }
+    if (trimmed.truncatedCount > 0) {
+      parts.push(`\n[${trimmed.truncatedCount} older events omitted — context budget reached]`);
     }
   } else {
     parts.push("═══ NO EVENTS ═══\nNo matching events in this time window.");
@@ -164,11 +171,18 @@ function buildUserPrompt(
     parts.push(`\n═══ HISTORICAL CONTEXT ═══\n${ragContext}`);
   }
 
-  // Recent reports for comparison
+  // Recent reports for comparison — cap each to prevent context overflow
   if (recentReports.length > 0) {
     parts.push("\n═══ PREVIOUS REPORTS (for trend comparison) ═══");
     for (const report of recentReports) {
-      parts.push(report);
+      if (report.length > MAX_RECENT_REPORT_CHARS) {
+        parts.push(
+          report.slice(0, MAX_RECENT_REPORT_CHARS) +
+            `\n[... truncated — ${report.length - MAX_RECENT_REPORT_CHARS} chars omitted]`
+        );
+      } else {
+        parts.push(report);
+      }
     }
   }
 
@@ -354,4 +368,64 @@ function computeAggregates(events: EventRow[]): string {
   }
 
   return lines.join("\n") || "No aggregate data to compute.";
+}
+
+/**
+ * Character budget for the events section of the prompt.
+ *
+ * Claude's context window is 200K tokens. Technical content (GitHub events,
+ * code snippets, PR descriptions) encodes at ~2.8 chars/token — much denser
+ * than prose text. We budget conservatively:
+ *
+ *   - System prompt + team list:  ~15K chars  (~5K tokens)
+ *   - Aggregates:                  ~1K chars
+ *   - RAG context:                 ~3K chars
+ *   - Recent reports (capped):    ~18K chars  (~6K tokens for 3 × 6K reports)
+ *   - Pending tasks:               ~1K chars
+ *   - Output budget:              ~16K chars  (~4K tokens reserved for output)
+ *   - Safety margin:              ~46K chars
+ *
+ * Events budget: 300K chars → ~107K tokens.
+ * Total estimated: ~128K tokens (well under 200K limit).
+ */
+const MAX_EVENT_CHARS = 300_000;
+
+/**
+ * Character budget per recent report (3 reports × 6K chars = 18K total).
+ * Prevents large historical reports from blowing up the context window.
+ */
+const MAX_RECENT_REPORT_CHARS = 6_000;
+
+/**
+ * Trim events to fit within the character budget, keeping the most recent.
+ *
+ * Events are expected in chronological order (oldest first). We scan backwards
+ * from the newest event, accumulating rendered character sizes until the budget
+ * is exhausted, then return the included events in their original order.
+ */
+function trimEventsToCharBudget(events: EventRow[]): {
+  events: EventRow[];
+  truncatedCount: number;
+} {
+  if (events.length === 0) return { events, truncatedCount: 0 };
+
+  // Pre-compute rendered size for each event (mirrors the rendering loop above)
+  const sizes = events.map((evt) => {
+    const detail = extractPayloadDetail(evt);
+    return `[${evt.timestamp}] ${evt.summary}${detail ? `\n${detail}` : ""}`.length;
+  });
+
+  // Scan from newest (end) to oldest (start), accumulating until budget is hit
+  let remaining = MAX_EVENT_CHARS;
+  let startIdx = events.length;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (remaining - sizes[i] < 0) break;
+    remaining -= sizes[i];
+    startIdx = i;
+  }
+
+  return {
+    events: events.slice(startIdx),
+    truncatedCount: startIdx,
+  };
 }

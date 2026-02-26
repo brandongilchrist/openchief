@@ -32,11 +32,6 @@
         "reportType": "daily-support-digest",
         "cadence": "daily",
         "sections": ["volume-and-response-times", "top-issues", "escalations", "customer-sentiment"]
-      },
-      {
-        "reportType": "weekly-support-review",
-        "cadence": "weekly",
-        "sections": ["week-metrics", "trending-issues", "resolution-analysis", "team-performance", "recommendations"]
       }
     ]
   },

@@ -22,6 +22,7 @@ import { isChannelIgnored } from "./ignored-channels";
 interface PollEnv {
   SLACK_BOT_TOKEN: string;
   IGNORED_CHANNELS?: string;
+  IGNORE_BOTS?: string;
   KV: KVNamespace;
   DB: D1Database;
   EVENTS_QUEUE: Queue;
@@ -208,7 +209,7 @@ async function backfillMessages(
             ch.name,
             resolver,
             workspaceName,
-            ch.is_private ?? false
+            { isPrivateChannel: ch.is_private ?? false, ignoreBots: env.IGNORE_BOTS !== "false" }
           );
           for (const event of events) {
             await env.EVENTS_QUEUE.send(event);
@@ -339,7 +340,7 @@ export async function runDeepBackfill(
           ch.name,
           resolver,
           workspaceName,
-          ch.is_private ?? false
+          { isPrivateChannel: ch.is_private ?? false, ignoreBots: env.IGNORE_BOTS !== "false" }
         );
         for (const event of events) {
           await env.EVENTS_QUEUE.send(event);

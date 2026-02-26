@@ -37,11 +37,6 @@
         "reportType": "daily-intelligence-brief",
         "cadence": "daily",
         "sections": ["top-signals", "competitor-intel", "industry-trends", "market-context", "opportunities", "so-what"]
-      },
-      {
-        "reportType": "weekly-research-digest",
-        "cadence": "weekly",
-        "sections": ["week-intelligence-summary", "competitor-landscape", "industry-trends", "market-analysis", "strategic-opportunities", "positioning-analysis"]
       }
     ]
   },

@@ -13,13 +13,24 @@ type UserResolver = (userId: string) => Promise<UserInfo>;
 
 // --- Main Normalizer ------------------------------------------------------------
 
+export interface NormalizeOptions {
+  isPrivateChannel?: boolean;
+  ignoreBots?: boolean;
+}
+
 export async function normalizeSlackEvent(
   event: Record<string, unknown>,
   channelName: string | undefined,
   resolveUser: UserResolver,
   workspaceName: string,
-  isPrivateChannel: boolean = false
+  isPrivateChannelOrOpts: boolean | NormalizeOptions = false
 ): Promise<OpenChiefEvent[]> {
+  const opts: NormalizeOptions =
+    typeof isPrivateChannelOrOpts === "boolean"
+      ? { isPrivateChannel: isPrivateChannelOrOpts }
+      : isPrivateChannelOrOpts;
+  const isPrivateChannel = opts.isPrivateChannel ?? false;
+  const ignoreBots = opts.ignoreBots ?? true;
   const eventType = event.type as string;
   const now = new Date().toISOString();
 
@@ -32,18 +43,15 @@ export async function normalizeSlackEvent(
         channelName,
         resolveUser,
         workspaceName,
-        now
+        now,
+        ignoreBots
       );
       break;
     case "reaction_added":
     case "reaction_removed":
-      events = await normalizeReaction(
-        event,
-        channelName,
-        resolveUser,
-        workspaceName,
-        now
-      );
+      // Reactions are too noisy (~300 per 48hr) with minimal signal for reports.
+      // Skip entirely — don't publish to queue or store in D1.
+      events = [];
       break;
     case "channel_created":
       events = await normalizeChannelCreated(event, resolveUser, workspaceName, now);
@@ -86,7 +94,8 @@ async function normalizeMessage(
   channelName: string | undefined,
   resolveUser: UserResolver,
   workspaceName: string,
-  now: string
+  now: string,
+  ignoreBots: boolean = true
 ): Promise<OpenChiefEvent[]> {
   const subtype = event.subtype as string | undefined;
   const channelId = event.channel as string;
@@ -94,13 +103,13 @@ async function normalizeMessage(
   const threadTs = event.thread_ts as string | undefined;
   const channel = channelName || channelId;
 
-  // Skip bot/app messages and channel system messages
-  if (
-    subtype === "bot_message" ||
-    subtype === "channel_join" ||
-    subtype === "channel_leave" ||
-    event.bot_id
-  ) {
+  // Skip channel system messages
+  if (subtype === "channel_join" || subtype === "channel_leave") {
+    return [];
+  }
+
+  // Skip bot/app messages when configured
+  if (ignoreBots && (subtype === "bot_message" || event.bot_id)) {
     return [];
   }
 
@@ -152,8 +161,8 @@ async function normalizeMessage(
 
   const actor = await resolveUser(userId);
 
-  // Skip bot users
-  if (actor.isBot) return [];
+  // Skip bot users when configured
+  if (ignoreBots && actor.isBot) return [];
 
   const rawText = (event.text as string) || "";
   const text = await resolveSlackMentions(rawText, resolveUser);

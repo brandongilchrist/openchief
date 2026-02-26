@@ -21,7 +21,6 @@ const MODEL_OPTIONS = [
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   "daily-report": "Daily Report",
-  "weekly-report": "Weekly Report",
   chat: "Chat",
 };
 
@@ -126,13 +125,6 @@ export function Models() {
             jobType: "daily-report",
             modelId: "claude-sonnet-4-6",
             maxTokens: 4096,
-            updatedAt: "",
-            updatedBy: null,
-          },
-          {
-            jobType: "weekly-report",
-            modelId: "claude-sonnet-4-6",
-            maxTokens: 8192,
             updatedAt: "",
             updatedBy: null,
           },
