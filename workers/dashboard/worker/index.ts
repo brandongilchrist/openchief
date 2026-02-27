@@ -1265,7 +1265,8 @@ async function handleGetAgent(request: Request, env: Env, agentId: string): Prom
 
   // Enforce exec visibility
   const userEmail = await getUserEmail(request, env);
-  if (!canAccessAgent(config, userEmail)) {
+  const userRole = await getUserRole(userEmail, env);
+  if (!canAccessAgent(config.visibility, userRole)) {
     return errorJson("Access restricted", 403);
   }
 
@@ -1631,9 +1632,11 @@ async function handleChat(
     body: JSON.stringify({ message, userEmail, userName }),
   });
 
-  // Stream the SSE response through
+  // Stream the SSE response through — remap upstream 401 to 502 to avoid
+  // the frontend mistaking it for a session-expired error.
+  const chatStatus = runtimeResponse.status === 401 ? 502 : runtimeResponse.status;
   return new Response(runtimeResponse.body, {
-    status: runtimeResponse.status,
+    status: chatStatus,
     headers: {
       "Content-Type": runtimeResponse.headers.get("Content-Type") || "text/event-stream",
       "Cache-Control": "no-cache",
@@ -1659,8 +1662,11 @@ async function handleChatHistory(
   });
 
   const data = await runtimeResponse.text();
+  // Remap upstream 401 to 502 so the frontend doesn't mistake it for a
+  // session-expired error and enter a reload loop.
+  const status = runtimeResponse.status === 401 ? 502 : runtimeResponse.status;
   return new Response(data, {
-    status: runtimeResponse.status,
+    status,
     headers: {
       "Content-Type": runtimeResponse.headers.get("Content-Type") || "application/json",
     },
@@ -1734,8 +1740,9 @@ async function handleTrigger(
   });
 
   const data = await runtimeResponse.text();
+  const triggerStatus = runtimeResponse.status === 401 ? 502 : runtimeResponse.status;
   return new Response(data, {
-    status: runtimeResponse.status,
+    status: triggerStatus,
     headers: {
       "Content-Type": runtimeResponse.headers.get("Content-Type") || "application/json",
     },
@@ -3276,8 +3283,9 @@ async function handleGenerateVoice(
     }
   }
 
+  const backfillStatus = runtimeResponse.status === 401 ? 502 : runtimeResponse.status;
   return new Response(runtimeData, {
-    status: runtimeResponse.status,
+    status: backfillStatus,
     headers: { "Content-Type": "application/json" },
   });
 }
