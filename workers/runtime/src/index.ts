@@ -221,7 +221,7 @@ export default {
         );
       }
 
-      const { callClaude } = await import("./claude-client");
+      const { callClaude } = await import("./llm-client");
       const model = env.DEFAULT_MODEL || "claude-sonnet-4-6";
 
       const systemPrompt = `You are an expert at analyzing communication styles and writing patterns.

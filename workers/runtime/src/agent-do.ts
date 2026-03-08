@@ -6,7 +6,7 @@ import type {
   ReportConfig,
   Task,
 } from "@openchief/shared";
-import { callClaude } from "./claude-client";
+import { callClaude } from "./llm-client";
 import { buildPrompt } from "./prompt-builder";
 import type { IdentityInfo, OrgInfo, PendingTask } from "./prompt-builder";
 import { buildChatSystemPrompt } from "./chat-prompt";
