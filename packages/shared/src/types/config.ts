@@ -50,6 +50,30 @@ export interface OpenChiefConfig {
     reportTimezone: string;
     /** Hour in UTC to generate daily reports (0-23) */
     reportTimeUtcHour: number;
+    /**
+     * LLM Provider configuration (optional — defaults to Anthropic API key).
+     * Configure multiple providers and select which one to use.
+     */
+    llmProvider?: {
+      /** Active provider type */
+      type: "anthropic" | "openai-codex" | "gemini" | "glm";
+      /** Provider-specific configuration */
+      config?: {
+        /** API key (for API-based providers like Anthropic, GLM) */
+        apiKey?: string;
+        /** OAuth configuration (for subscription-based providers) */
+        oauth?: {
+          clientId?: string;
+          clientSecret?: string;
+          refreshToken?: string;
+          accessToken?: string;
+        };
+        /** CLI path (for CLI-based providers like Gemini, OpenAI Codex) */
+        cliPath?: string;
+        /** Base URL (for GLM or custom endpoints) */
+        baseUrl?: string;
+      };
+    };
   };
 
   /** Authentication configuration */
